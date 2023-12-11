@@ -1,5 +1,5 @@
-# with open('results.pkl', 'rb') as file:
-#    dictionary = pickle.load(file)
+
+__author__ = 'Bahram Jafrasteh'
 import pickle
 import numpy as np
 import matplotlib.pyplot as plt
@@ -12,6 +12,23 @@ dataset='abcd5'
 Es = [5]  # Level of perturbation
 Ns = [1000]  # Number of samples
 
+def create_box_plots(data, labels, title='BoxPlots'):
+
+    # Create a figure and axis
+    fig, ax = plt.subplots(figsize=(8, 6))
+
+    ax.boxplot(data, labels=labels,notch=True, patch_artist=True)
+
+    ax.grid(True, linestyle='--', alpha=0.7)
+    ax.set_xticklabels(labels, rotation=45, ha='right')
+    plt.tight_layout()
+
+    ax.set_title(title)
+
+    # Show the plot
+    plt.savefig('boxplot_{}_{}.pdf'.format(dataset, title))
+    plt.close()
+
 def make_dic(comb):
     km = defaultdict(list)  # np.zeros((len(Ss), len(Ks)))
     for el in comb:
@@ -21,6 +38,14 @@ def calc_mean(dicti, shape):
     m = np.zeros(shape)
     for key in dicti.keys():
         m[key[0], key[1]]=np.nanmean(dicti[key])
+    return m
+
+def calc_median(dicti, shape):
+    m = np.zeros(shape)
+    for key in dicti.keys():
+        arr = np.array(dicti[key])
+        non_nan_values = arr[~np.isnan(arr)]
+        m[key[0], key[1]]=np.median(non_nan_values)
     return m
 
 
@@ -48,10 +73,20 @@ for i, el in enumerate(dictionary.keys()):
     KM_corrected_t_test[row, col].append([ p_value_corrected_t_test])
 
 shape = (len(Ss), len(Ks))
+### MEDIAN ####
+KM_mcnemar_median = calc_median(KM_mcnemar, shape)
+KM_delong_median = calc_median(KM_delong, shape)
+KM_t_test_median = calc_median(KM_t_test, shape)
+KM_corrected_t_test_median = calc_median(KM_corrected_t_test, shape)
+create_box_plots([KM_t_test_median.ravel(), KM_corrected_t_test_median.ravel(), KM_mcnemar_median.ravel(), KM_delong_median[~np.isnan(KM_delong_median)].ravel()],
+                 labels=['Uncorrected t-test', 'Corrected t-test', 'McNemar', 'Delong'], title='Median')
+######### MEAN###
 KM_mcnemar = calc_mean(KM_mcnemar, shape)
 KM_delong = calc_mean(KM_delong, shape)
 KM_t_test = calc_mean(KM_t_test, shape)
 KM_corrected_t_test = calc_mean(KM_corrected_t_test, shape)
+create_box_plots([KM_t_test.ravel(), KM_corrected_t_test.ravel(), KM_mcnemar.ravel(), KM_delong[~np.isnan(KM_delong)].ravel()],
+                 labels=['Uncorrected t-test', 'Corrected t-test', 'McNemar', 'Delong'], title='Mean')
 import seaborn as sns
 
 
@@ -63,12 +98,12 @@ sns.set()
 
 x_labels = [str(i) for i in Ks]
 y_labels = [str(i) for i in Ss]
-titles = ['Correct t-test', 't-test', 'McNemar', 'Delong']
-Matrices = [KM_corrected_t_test, KM_t_test, KM_mcnemar, KM_delong]
+titles = ['Corrected t-test', 't-test', 'Corrected t-test (median)', 't-test (median)']
+Matrices = [KM_corrected_t_test, KM_t_test, KM_corrected_t_test_median, KM_t_test_median]
 
 for ii, (i,j) in enumerate(product([0,1], repeat=2)):
-    print(i,j)
-    sns.heatmap(Matrices[ii], cmap="viridis", annot=True, fmt=".2f", linewidths=.5, ax=axes[i,j], vmin=0, vmax=1)
+
+    sns.heatmap(Matrices[ii], cmap="viridis", annot=True, fmt=".2f", linewidths=.5, ax=axes[i,j])# vmin=0, vmax=1)
     axes[i,j].set_title(titles[ii])
     axes[i,j].set_xticks(np.arange(0.5, len(x_labels)+.5))
     axes[i,j].set_xticklabels(x_labels, rotation=45, ha='right')
@@ -79,7 +114,5 @@ for ii, (i,j) in enumerate(product([0,1], repeat=2)):
 
 plt.tight_layout()
 
-plt.show()
-
-# Show the plot
-plt.show()
+plt.savefig('Plots_{}.pdf'.format(dataset))
+plt.close()
