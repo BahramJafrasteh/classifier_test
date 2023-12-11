@@ -1,3 +1,6 @@
+__author__ = 'Bahram Jafrasteh'
+# based on matlab code written by Qingyu Zhao
+
 import matplotlib.pyplot as plt
 import numpy as np
 import multiprocessing as mp
