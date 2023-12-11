@@ -61,6 +61,9 @@ if dataset.lower()=='abcd5':
         features_not_processed[:,i] -= model.coef_*headsize
 
     labels = df_features_output['demo_sex_v2'].values-1
+    ind_lable = labels<2
+    features_not_processed = features_not_processed[ind_lable,:]
+    labels = labels[ind_lable]
     scaler = StandardScaler()
     inputData = scaler.fit_transform(features_not_processed)
 
@@ -123,24 +126,31 @@ def cross_validation(inputData, labels, kf, perturb):
     for train_index, test_index in kf.split(inputData, labels):
         X_train, X_test = inputData[train_index], inputData[test_index]
         y_train, y_test = labels[train_index], labels[test_index]
-        model1 = LogisticRegression(penalty='l2', solver='lbfgs', C=1.0)
-        model1.fit(X_train, y_train.squeeze())
+        model = LogisticRegression(penalty='l2', solver='lbfgs', C=1.0, max_iter=1000)
+        model.fit(X_train, y_train.squeeze())
+        coef_ = model.coef_.copy()
+        #model2 = LogisticRegression(penalty='l2', solver='lbfgs', C=1.0, max_iter=1000)
+        #model2.fit(X_train, y_train.squeeze())
 
-        model2 = LogisticRegression(penalty='l2', solver='lbfgs', C=1.0)
-        model2.fit(X_train, y_train.squeeze())
-
-        model1.coef_+=perturb
-        model2.coef_-=perturb
-        y_predp = model1.predict(X_test)
-        y_predn = model2.predict(X_test)
+        coefp = coef_+perturb
+        coefn = coef_-perturb
+        model.coef_ = coefp
+        y_predp = model.predict(X_test)
+        model.coef_ = coefn
+        y_predn = model.predict(X_test)
         accp = accuracy_score(y_predp, y_test)
         accn = accuracy_score(y_predn, y_test)
         accpos.append(accp)
         accneg.append(accn)
     return accpos, accneg, [y_predp, y_predn, y_test]
 
-
-
+def select_sample(ind_gender, size):
+    inp1 = inputData[ind_gender, :]
+    lb1 = labels[ind_gender]
+    randomindinces_p = np.random.choice((ind_gender).sum(),size )
+    X_sel = inp1[randomindinces_p, :]
+    Y_sel = lb1[randomindinces_p]
+    return X_sel, Y_sel
 def run_experiment(info):
     """
     Run the experiment
@@ -152,9 +162,12 @@ def run_experiment(info):
     # K number of folds in cross-validation
     # E perturbation level
     # S number of repetition of the K-fold cross-validation
-    randomindinces = np.random.choice(inputData.shape[0], N)
-    X_sel = inputData[randomindinces, :]
-    Y_sel = labels[randomindinces]
+    ind_gender = (labels==1)
+    x1,y1=select_sample(ind_gender, N//2)
+    x2, y2=select_sample(~ind_gender, N-N//2)
+
+    X_sel = np.concatenate([x1,x2])
+    Y_sel = np.concatenate([y1,y2])
     feature = X_sel.shape[1] #number of features
     perturb = np.random.randn(1,feature) / E # perturbation matrix
 
@@ -208,7 +221,7 @@ if __name__ == '__main__':
     #Ss=[1]
     #Ks=[100]
     Es = [5] # Level of perturbation
-    Ns = [10000] # Number of samples
+    Ns = [1000] # Number of samples
 
     list_total = []
     for p in range(P):
@@ -229,32 +242,3 @@ if __name__ == '__main__':
     # write the results to a file
     with open('{}_perturbation_{}_sample_{}.pkl'.format(dataset, Es[0], Ns[0]), 'wb') as file:
         pickle.dump(dictionary, file)
-    test = False
-    if test:
-        KM_mcnemar = np.zeros((len(Ss), len(Ks)))
-        KM_delong = np.zeros((len(Ss), len(Ks)))
-        KM_t_test = np.zeros((len(Ss), len(Ks)))
-        KM_corrected_t_test = np.zeros((len(Ss), len(Ks)))
-        # add the results to a the matrix
-        for i, el in enumerate(list_total):
-            [Pv_mcnemar, Pv_delong, p_value_t_test, p_value_corrected_t_test] = results[i]
-            row, col = Ss.index(el[2]), Ks.index(el[0])
-            KM_mcnemar[row, col] += Pv_mcnemar[0]
-            KM_delong[row, col] += Pv_delong[0]
-            KM_t_test[row, col] += p_value_t_test
-            KM_corrected_t_test[row, col] += p_value_corrected_t_test
-        KM_mcnemar/=P
-        KM_delong/=P
-        KM_t_test/=P
-        KM_corrected_t_test/=P
-        dictionary = defaultdict(list)
-        dictionary['mcnemar'] = KM_mcnemar
-        dictionary['delong'] = KM_delong
-        dictionary['t_test'] = KM_t_test
-        dictionary['c_t_test'] = KM_corrected_t_test
-
-        # read the results from a file
-        #with open('results.pkl', 'rb') as file:
-        #    dictionary = pickle.load(file)
-        #plt.imshow(KM_mcnemar)
-        #plt.show()
