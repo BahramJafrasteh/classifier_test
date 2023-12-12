@@ -12,7 +12,8 @@ from sklearn.model_selection import KFold, StratifiedKFold
 import compare_auc_delong_xu
 
 
-dataset='abcd5'
+dataset='adni'
+
 import pandas as pd
 
 if dataset.lower()=='abcd5':
@@ -28,7 +29,6 @@ if dataset.lower()=='abcd5':
     sub_df_aseg = df_aseg[df_aseg['eventname']=='baseline_year_1_arm_1']
     sub_df_demo = df_demo[df_demo['eventname']=='baseline_year_1_arm_1']
 
-    'demo_sex_v2'
     #merged_df = pd.merge(df_demo, df_thk, on='src_subject_id')
     #merged_df[[el for el in list(df_thk.columns) + ['demo_sex_v2'] if el != 'eventname']]
     subject_id = sub_df_thk['src_subject_id'].values
@@ -69,6 +69,41 @@ if dataset.lower()=='abcd5':
     labels = labels[ind_lable]
     scaler = StandardScaler()
     inputData = scaler.fit_transform(features_not_processed)
+elif dataset.lower()=='adni':
+
+    df_head = pd.read_csv('ADNI/ADNIMERGE.csv')
+    df_head = df_head.dropna(subset=['DX']) # drop all na values from diagnostics
+    df_head = df_head[df_head['VISCODE'] == 'bl']
+    df_1 = pd.read_csv('ADNI/roi_data_ADNI/roi/UCSFFSX_11_02_15_28Sep2023.csv')
+    df_2 = pd.read_csv('ADNI/roi_data_ADNI/roi/UCSFFSX6_08_17_22_28Sep2023.csv')
+    df_3 = pd.read_csv('ADNI/roi_data_ADNI/roi/UCSFFSX51_11_08_19_28Sep2023.csv')
+    df_4 = pd.read_csv('ADNI/roi_data_ADNI/roi/UCSFFSX51_ADNI1_3T_02_01_16_28Sep2023.csv')
+    df_con = pd.concat([df_1, df_2, df_3, df_4])
+
+    df_total = pd.merge(df_head, df_con, on='IMAGEUID')
+    df_total = df_total[df_total['OVERALLQC'].astype(str) == 'Pass']
+
+    feature_names = ['ST91TA', 'ST32TA', 'ST13CV', 'ST115CV', 'ST26CV', 'ST118CV', 'ST13TA', 'ST26TA', 'ST29SV', 'ST72CV', 'ST103CV',
+     'ST58CV', 'ST91CV', 'ST31CV', 'ST60TA', 'ST111CV', 'ST119TA', 'ST30SV', 'ST129CV', 'ST44TA', 'ST111TA',
+     'ST32CV', 'ST24CV', 'ST85TA', 'ST99TA', 'ST99CV', 'ST58TA', 'ST24TA', 'ST50CV', 'ST59CV', 'ST12SV', 'ST130CV',
+     'ST40CV', 'ST44CV', 'ST52CV', 'ST109CV', 'ST72TA', 'ST31TA', 'ST83CV', 'ST90TA', 'ST90CV', 'ST89SV', 'ST83TA',
+     'ST85CV', 'ST88SV', 'ST52TA', 'ST71SV', 'ST40TA', 'ST117TA', 'ST103TA', 'ST117CV', 'AGE', 'PTGENDER', 'DX_bl', 'ICV']
+
+
+    df_total = df_total[feature_names]
+    mapping = {'Male': 1, 'Female': 0}
+    df_total['PTGENDER'] = df_total['PTGENDER'].map(mapping)
+    headsize = df_total['ICV'].values
+    features_not_processed = df_total[feature_names[:-2]].values.astype(np.float)
+    model = LinearRegression(fit_intercept=True)
+    for i in [-1,-2]:
+        model.fit(headsize.reshape(-1,1), features_not_processed[:,i])
+        features_not_processed[:,i] -= model.coef_*headsize
+    labels = df_total['DX_bl'].map({'AD':1}).fillna(0).values
+
+    scaler = StandardScaler()
+    inputData = scaler.fit_transform(features_not_processed)
+
 
 def McNemar(y_predp, y_predn, y_test):
     # Create a contingency table
@@ -150,9 +185,14 @@ def cross_validation(inputData, labels, kf, perturb):
 def select_sample(ind_gender, size):
     inp1 = inputData[ind_gender, :]
     lb1 = labels[ind_gender]
-    randomindinces_p = np.random.choice((ind_gender).sum(),size )
-    X_sel = inp1[randomindinces_p, :]
-    Y_sel = lb1[randomindinces_p]
+    if size< lb1.shape[0]:
+        randomindinces_p = np.random.choice((ind_gender).sum(),size )
+        X_sel = inp1[randomindinces_p, :]
+        Y_sel = lb1[randomindinces_p]
+    else:
+        X_sel = inp1
+        Y_sel = lb1
+
     return X_sel, Y_sel
 def run_experiment(info):
     """
@@ -167,7 +207,7 @@ def run_experiment(info):
     # S number of repetition of the K-fold cross-validation
     ind_gender = (labels==1)
     x1,y1=select_sample(ind_gender, N//2)
-    x2, y2=select_sample(~ind_gender, N-N//2)
+    x2, y2=select_sample(~ind_gender, N-x1.shape[0])
 
     X_sel = np.concatenate([x1,x2])
     Y_sel = np.concatenate([y1,y2])
@@ -203,8 +243,6 @@ def run_experiment(info):
     # perform t_test
     p_value_t_test = t_test(all_accps, all_accneg)
 
-    if np.isnan(p_value_t_test):
-        print('')
     # perform corrected t_test
     p_value_corrected_t_test = corrected_t_test(all_accps, all_accneg, N, K)
 
@@ -235,8 +273,6 @@ if __name__ == '__main__':
                         list_total.append([k, e, s, n])
 
 
-    #for el in list_total:
-    #    run_experiment(el)
     pool = mp.Pool(int(mp.cpu_count() // 10))
     results = pool.map(run_experiment, list_total)
     dictionary = defaultdict(list)
