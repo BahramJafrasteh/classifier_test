@@ -12,7 +12,7 @@ from sklearn.model_selection import KFold, StratifiedKFold
 import compare_auc_delong_xu
 
 
-dataset='adni'
+dataset='abcd5'
 
 import pandas as pd
 
@@ -65,10 +65,9 @@ if dataset.lower()=='abcd5':
 
     labels = df_features_output['demo_sex_v2'].values-1
     ind_lable = labels<2
-    features_not_processed = features_not_processed[ind_lable,:]
+    inputData = features_not_processed[ind_lable,:]
     labels = labels[ind_lable]
-    scaler = StandardScaler()
-    inputData = scaler.fit_transform(features_not_processed)
+
 elif dataset.lower()=='adni':
 
     df_head = pd.read_csv('ADNI/ADNIMERGE.csv')
@@ -100,9 +99,7 @@ elif dataset.lower()=='adni':
         model.fit(headsize.reshape(-1,1), features_not_processed[:,i])
         features_not_processed[:,i] -= model.coef_*headsize
     labels = df_total['DX_bl'].map({'AD':1}).fillna(0).values
-
-    scaler = StandardScaler()
-    inputData = scaler.fit_transform(features_not_processed)
+    inputData = features_not_processed
 
 
 def McNemar(y_predp, y_predn, y_test):
@@ -150,7 +147,7 @@ def corrected_t_test(accp , accn, N, K):
     t_static =  accm / np.sqrt(sigma2_mod)
     return t.cdf(-abs(t_static),n-1)
 
-def cross_validation(inputData, labels, kf, perturb):
+def cross_validation(inputData, labels, kf, perturb, info_model, use_model=None):
     """
     Performing K-fold cross validaiton
     :param inputData: X
@@ -161,25 +158,41 @@ def cross_validation(inputData, labels, kf, perturb):
     """
     accpos = []
     accneg = []
+    accs = []
     for train_index, test_index in kf.split(inputData, labels):
         X_train, X_test = inputData[train_index], inputData[test_index]
         y_train, y_test = labels[train_index], labels[test_index]
-        model = LogisticRegression(penalty='l2', solver='lbfgs', C=1.0, max_iter=1000)
-        model.fit(X_train, y_train.squeeze())
-        coef_ = model.coef_.copy()
-        #model2 = LogisticRegression(penalty='l2', solver='lbfgs', C=1.0, max_iter=1000)
-        #model2.fit(X_train, y_train.squeeze())
 
-        coefp = coef_+perturb
-        coefn = coef_-perturb
-        model.coef_ = coefp
-        y_predp = model.predict(X_test)
-        model.coef_ = coefn
-        y_predn = model.predict(X_test)
+        scaler = StandardScaler()
+        X_train = scaler.fit_transform(X_train)
+        X_test = scaler.transform(X_test)
+
+        if use_model =='lr':
+            model = LogisticRegression(penalty='l2', solver='lbfgs', C=1.0, max_iter=1000)
+            model.fit(X_train, y_train.squeeze())
+            y_pred = model.predict(X_test)
+            coef_ = model.coef_.copy()
+            #model2 = LogisticRegression(penalty='l2', solver='lbfgs', C=1.0, max_iter=1000)
+            #model2.fit(X_train, y_train.squeeze())
+
+            coefp = coef_+perturb
+            coefn = coef_-perturb
+            model.coef_ = coefp
+            y_predp = model.predict(X_test)
+            model.coef_ = coefn
+            y_predn = model.predict(X_test)
+        elif use_model == 'mlp':
+            from MLP_model import create_train_MLP_model
+            hidden_size, learning_rate, num_epochs, batch_size = info_model
+            y_pred, y_predp, y_predn = create_train_MLP_model(X_train,y_train, perturb, X_test, hidden_size = hidden_size,    learning_rate = learning_rate,
+                           num_epochs=num_epochs,    batch_size = batch_size)
+
+        acc = accuracy_score(y_pred, y_test)
         accp = accuracy_score(y_predp, y_test)
         accn = accuracy_score(y_predn, y_test)
         accpos.append(accp)
         accneg.append(accn)
+        accs.append(acc)
     return accpos, accneg, [y_predp, y_predn, y_test]
 
 def select_sample(ind_gender, size):
@@ -205,6 +218,9 @@ def run_experiment(info):
     # K number of folds in cross-validation
     # E perturbation level
     # S number of repetition of the K-fold cross-validation
+
+
+
     ind_gender = (labels==1)
     x1,y1=select_sample(ind_gender, N//2)
     x2, y2=select_sample(~ind_gender, N-x1.shape[0])
@@ -212,7 +228,13 @@ def run_experiment(info):
     X_sel = np.concatenate([x1,x2])
     Y_sel = np.concatenate([y1,y2])
     feature = X_sel.shape[1] #number of features
-    perturb = np.random.randn(1,feature) / E # perturbation matrix
+    if use_model=='lr':
+        perturb = np.random.randn(1, feature) / E  # perturbation matrix
+        info_model = [None]
+    elif use_model=='mlp':
+        hidden_size, learning_rate, num_epochs, batch_size=128, 0.01, 50, 1000
+        info_model = [hidden_size, learning_rate, num_epochs, batch_size]
+        perturb = np.random.randn(1, hidden_size) / E # for the last layer
 
     all_accps = []
     all_accneg = []
@@ -221,7 +243,7 @@ def run_experiment(info):
     for i in range(S):
         # stratified k-fold cross validation
         kf = StratifiedKFold(n_splits=K, shuffle=True)
-        accpos, accneg, [y_predp, y_predn, y_test] = cross_validation(X_sel, Y_sel, kf, perturb)
+        accpos, accneg, [y_predp, y_predn, y_test] = cross_validation(X_sel, Y_sel, kf, perturb, info_model, use_model=use_model)
         all_accps.append(np.array(accpos))
         all_accneg.append(np.array(accneg))
 
@@ -260,6 +282,8 @@ if __name__ == '__main__':
     Ss = [1, 4, 10, 15] # Repeat the K-fold cross-validation S times
     Ks = [2, 10, 50, 100, 200, 400] # K-fold CV
     #Ss=[1]
+    global use_model
+    use_model = 'mlp'
     #Ks=[100]
     Es = [5] # Level of perturbation
     Ns = [1000] # Number of samples
@@ -273,11 +297,13 @@ if __name__ == '__main__':
                         list_total.append([k, e, s, n])
 
 
+    #for el in list_total:
+    #    run_experiment(el)
     pool = mp.Pool(int(mp.cpu_count() // 10))
     results = pool.map(run_experiment, list_total)
     dictionary = defaultdict(list)
     for i, el in enumerate(list_total):
         dictionary[i] = [el, results[i]]
     # write the results to a file
-    with open('{}_perturbation_{}_sample_{}.pkl'.format(dataset, Es[0], Ns[0]), 'wb') as file:
+    with open('{}_perturbation_{}_sample_{}_model_{}.pkl'.format(dataset, Es[0], Ns[0], use_model), 'wb') as file:
         pickle.dump(dictionary, file)
