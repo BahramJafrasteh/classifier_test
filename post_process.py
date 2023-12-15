@@ -6,14 +6,6 @@ import matplotlib.pyplot as plt
 from collections import defaultdict
 import seaborn as sns
 import pandas as pd
-P=100
-Ss = [1, 4, 10, 15][::-1]  # Repeat the K-fold cross-validation S times
-Ks = [2, 10, 50, 100, 200, 400]  # K-fold CV
-from itertools import product
-dataset='abcd5'
-dataset = 'adni'
-Es = [5]  # Level of perturbation
-Ns = [1000]  # Number of samples
 
 
 
@@ -220,6 +212,17 @@ def calc_pr(dicti, shape):
 
 
 if __name__=='__main__':
+    global P, Ss, Ks, dataset, Es, Ns
+    P = 100
+    Ss = [1, 4, 10, 15][::-1]  # Repeat the K-fold cross-validation S times
+    Ks = [2, 10, 50, 100, 200, 400]  # K-fold CV
+    from itertools import product
+
+    dataset = 'abcd5'
+    dataset = 'adni'
+    Es = [5]  # Level of perturbation
+    Ns = [1000]  # Number of samples
+
     print('{}_perturbation_{}_sample_{}.pkl'.format(dataset, Es[0], Ns[0]))
     with open('{}_perturbation_{}_sample_{}.pkl'.format(dataset, Es[0], Ns[0]), 'rb') as file:
         dictionary = pickle.load(file)
