@@ -1,7 +1,9 @@
 __author__ = 'Bahram Jafrasteh'
 # based on matlab code written by Qingyu Zhao
+import torch
+import torch.nn as nn
 
-import matplotlib.pyplot as plt
+
 import numpy as np
 import multiprocessing as mp
 from sklearn.svm import LinearSVC
@@ -10,9 +12,11 @@ from sklearn.metrics import accuracy_score
 from sklearn.linear_model import LogisticRegression, LinearRegression
 from sklearn.model_selection import KFold, StratifiedKFold
 import compare_auc_delong_xu
+import sys
+from torchvision import transforms
+from MLP_model import MLPClassifier, train_perturb_evaluate_MLP_model, calc_accuracy
 
-
-dataset='abcd5'
+dataset=sys.argv[1]
 
 import pandas as pd
 
@@ -147,7 +151,7 @@ def corrected_t_test(accp , accn, N, K):
     t_static =  accm / np.sqrt(sigma2_mod)
     return t.cdf(-abs(t_static),n-1)
 
-def cross_validation(inputData, labels, kf, perturb, info_model, use_model=None):
+def cross_validation(inputData, labels, kf, perturb, info_model, use_model=None, early_break=False):
     """
     Performing K-fold cross validaiton
     :param inputData: X
@@ -159,15 +163,54 @@ def cross_validation(inputData, labels, kf, perturb, info_model, use_model=None)
     accpos = []
     accneg = []
     accs = []
-    for train_index, test_index in kf.split(inputData, labels):
-        X_train, X_test = inputData[train_index], inputData[test_index]
+    #r = 0
+    [train_indices, val_indices] = kf
+    if use_model=='mlp':
+        hidden_size, learning_rate, num_epochs, batch_size = info_model
+        device = torch.device('cpu')
+        if device_id>=0:
+            if torch.cuda.is_available():
+                #device = torch.device('cuda:{}'.format(device_id))
+                if 2>1:
+                    import GPUtil
+                    gpus = GPUtil.getGPUs()
+                    optimal = None
+                    for i, gpu in enumerate(gpus):
+                        used = gpu.memoryUsed/gpu.memoryTotal
+                        if used<0.9:
+                            optimal = i
+                            break
+                    if optimal is not None:
+                        device = torch.device('cuda:{}'.format(optimal))
+
+        inputData = torch.from_numpy(inputData.astype(np.float32)).to(device)
+        labels = torch.from_numpy(labels.astype(np.float32)).to(device)
+        perturb = torch.from_numpy(perturb.astype(np.float32)).to(device)
+
+        input_size = inputData.shape[1]
+        output_size = 1
+        model = MLPClassifier(input_size, hidden_size, output_size)
+        model.to(device)
+        state_dict = model.state_dict()
+        optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+
+    for train_index, test_index in zip(*[train_indices, val_indices]):
+        #if early_break and r ==1:
+        #    break
+        #r+=1
+        X_train, X_test = inputData[train_index, :], inputData[test_index, :]
         y_train, y_test = labels[train_index], labels[test_index]
 
-        scaler = StandardScaler()
-        X_train = scaler.fit_transform(X_train)
-        X_test = scaler.transform(X_test)
+        class_weights = y_train.shape[0] / (2 * torch.bincount(y_train.to(torch.int))[1])
+        criterion = nn.BCEWithLogitsLoss(pos_weight=class_weights)
 
-        if use_model =='lr':
+        if use_model=='lr':
+
+
+            scaler = StandardScaler()
+            X_train = scaler.fit_transform(X_train)
+            X_test = scaler.transform(X_test)
+
             model = LogisticRegression(penalty='l2', solver='lbfgs', C=1.0, max_iter=1000)
             model.fit(X_train, y_train.squeeze())
             y_pred = model.predict(X_test)
@@ -181,18 +224,33 @@ def cross_validation(inputData, labels, kf, perturb, info_model, use_model=None)
             y_predp = model.predict(X_test)
             model.coef_ = coefn
             y_predn = model.predict(X_test)
-        elif use_model == 'mlp':
-            from MLP_model import create_train_MLP_model
-            hidden_size, learning_rate, num_epochs, batch_size = info_model
-            y_pred, y_predp, y_predn = create_train_MLP_model(X_train,y_train, perturb, X_test, hidden_size = hidden_size,    learning_rate = learning_rate,
-                           num_epochs=num_epochs,    batch_size = batch_size)
 
-        acc = accuracy_score(y_pred, y_test)
-        accp = accuracy_score(y_predp, y_test)
-        accn = accuracy_score(y_predn, y_test)
+            acc = accuracy_score(y_pred, y_test)
+            #print(acc)
+            accp = accuracy_score(y_predp, y_test)
+            accn = accuracy_score(y_predn, y_test)
+
+        elif use_model=='mlp':
+            # Calculate mean and standard deviation along the specified axis (usually axis=0)
+            mean = X_train.mean(0)
+            std = X_train.std(0)+1e-10
+            # normalize data
+            X_train = (X_train-mean)/(std)
+            X_test = (X_test-mean)/(std)
+            model.load_state_dict(state_dict) #reset model weights
+            y_pred, y_predp, y_predn = train_perturb_evaluate_MLP_model(X_train,y_train, perturb, X_test, model, optimizer, criterion,
+                           num_epochs=num_epochs,    batch_size = batch_size, device=device)
+
+            acc = calc_accuracy(y_pred, y_test)
+            accp = calc_accuracy(y_predp, y_test)
+            accn = calc_accuracy(y_predn, y_test)
         accpos.append(accp)
         accneg.append(accn)
         accs.append(acc)
+    if use_model=='mlp':
+        y_predn = y_predn.detach().cpu().numpy()
+        y_test = y_test.detach().cpu().numpy()
+        y_predp = y_predp.detach().cpu().numpy()
     return accpos, accneg, [y_predp, y_predn, y_test]
 
 def select_sample(ind_gender, size):
@@ -213,7 +271,7 @@ def run_experiment(info):
     :param info:
     :return:
     """
-    K, E, S, N =info
+    K, E, S, N,p =info
     print(info)
     # K number of folds in cross-validation
     # E perturbation level
@@ -232,7 +290,7 @@ def run_experiment(info):
         perturb = np.random.randn(1, feature) / E  # perturbation matrix
         info_model = [None]
     elif use_model=='mlp':
-        hidden_size, learning_rate, num_epochs, batch_size=128, 0.01, 50, 1000
+        hidden_size, learning_rate, num_epochs, batch_size=128, 0.001, 400, 1000
         info_model = [hidden_size, learning_rate, num_epochs, batch_size]
         perturb = np.random.randn(1, hidden_size) / E # for the last layer
 
@@ -243,7 +301,17 @@ def run_experiment(info):
     for i in range(S):
         # stratified k-fold cross validation
         kf = StratifiedKFold(n_splits=K, shuffle=True)
-        accpos, accneg, [y_predp, y_predn, y_test] = cross_validation(X_sel, Y_sel, kf, perturb, info_model, use_model=use_model)
+
+        # Lists to store training and validation indices
+        train_indices = []
+        val_indices = []
+
+        # Split the data using StratifiedKFold
+        for train_index, val_index in kf.split(X_sel, Y_sel):
+            train_indices.append(train_index)
+            val_indices.append(val_index)
+
+        accpos, accneg, [y_predp, y_predn, y_test] = cross_validation(X_sel, Y_sel, [train_indices, val_indices], perturb, info_model, use_model=use_model, early_break=False)
         all_accps.append(np.array(accpos))
         all_accneg.append(np.array(accneg))
 
@@ -278,9 +346,11 @@ if __name__ == '__main__':
     from collections import defaultdict
     import pickle
 
+
     P = 100 # repeat the whole experiment P times
     Ss = [1, 4, 10, 15] # Repeat the K-fold cross-validation S times
     Ks = [2, 10, 50, 100, 200, 400] # K-fold CV
+
     #Ss=[1]
     global use_model
     use_model = 'mlp'
@@ -294,12 +364,15 @@ if __name__ == '__main__':
             for s in Ss:
                 for e in Es:
                     for n in Ns:
-                        list_total.append([k, e, s, n])
+                        list_total.append([k, e, s, n, p])
 
+    global device_id
+    device_id=int(sys.argv[2])
 
     #for el in list_total:
     #    run_experiment(el)
-    pool = mp.Pool(int(mp.cpu_count() // 10))
+
+    pool = mp.Pool(int(mp.cpu_count() //7))
     results = pool.map(run_experiment, list_total)
     dictionary = defaultdict(list)
     for i, el in enumerate(list_total):
