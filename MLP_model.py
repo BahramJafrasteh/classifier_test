@@ -25,7 +25,7 @@ class MLPClassifier(nn.Module):
 
 # Function to train the model
 def train_perturb_evaluate_MLP_model(X_input, y_input, perturb, X_test, model, optimizer,  criterion,
-                           num_epochs=100,    batch_size = 256, device=None):
+                           num_epochs=100,    batch_size = 256, device=None, out_f_name=None):
 
     def binarize(y, thrs):
         ind= y<thrs
@@ -74,13 +74,15 @@ def train_perturb_evaluate_MLP_model(X_input, y_input, perturb, X_test, model, o
     #print(end_time-start_time)
 
     model.eval()
-    weightp = model.fc2.weight.data + perturb
-    weightn = model.fc2.weight.data - perturb
-    y_pred = model(X_test)  # orignal model
-    model.fc2.weight.data = weightp
-    y_predp = model(X_test)  # perturbated positive
-    model.fc2.weight.data = weightn
-    y_predn = model(X_test)  # perturbated negative
+    torch.save(model.state_dict(), out_f_name)
+    with torch.no_grad():
+        weightp = model.fc2.weight.data + perturb
+        weightn = model.fc2.weight.data - perturb
+        y_pred = model(X_test)  # orignal model
+        model.fc2.weight.data = weightp
+        y_predp = model(X_test)  # perturbated positive
+        model.fc2.weight.data = weightn
+        y_predn = model(X_test)  # perturbated negative
     y_pred = binarize(y_pred, thrs=0.5)
     y_predp = binarize(y_predp, thrs=0.5)
     y_predn = binarize(y_predn, thrs=0.5)
