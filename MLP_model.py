@@ -3,7 +3,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 import numpy as np
 from sklearn.model_selection import train_test_split
-import time
+import os
 # Define the MLP model
 class MLPClassifier(nn.Module):
     def __init__(self, input_size, hidden_size, output_size, dropout_prob=0.5):
@@ -32,49 +32,53 @@ def train_perturb_evaluate_MLP_model(X_input, y_input, perturb, X_test, model, o
         y[ind]=0
         y[~ind]=1
         return y
+    if os.path.isfile(out_f_name):
+        state_dict0 = torch.load(out_f_name)
+        model.load_state_dict(state_dict0)  # reset model weights
+        model.eval()
+    else:
 
-    X_train, X_val, y_train, y_val = train_test_split(X_input, y_input, test_size=0.2)
+        X_train, X_val, y_train, y_val = train_test_split(X_input, y_input, test_size=0.2)
+        train_dataset = TensorDataset(X_train, y_train)
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+        model.train()
+        best_acc_v = np.inf
+        patience = 5 #parameter of early stopping
+        #start_time = time.time()
+        early_stop_counter = 0
+        for e in range(num_epochs):
+            loss_i = []
+            breaked = False
+            for inputs, labels in train_loader:
+                optimizer.zero_grad()
+                outputs = model(inputs)
+                loss = criterion(outputs, labels.float().unsqueeze(1))
+                loss.backward()
+                optimizer.step()
 
-    train_dataset = TensorDataset(X_train, y_train)
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    model.train()
-    best_acc_v = np.inf
-    patience = 5 #parameter of early stopping
-    #start_time = time.time()
-    early_stop_counter = 0
-    for e in range(num_epochs):
-        loss_i = []
-        breaked = False
-        for inputs, labels in train_loader:
-            optimizer.zero_grad()
-            outputs = model(inputs)
-            loss = criterion(outputs, labels.float().unsqueeze(1))
-            loss.backward()
-            optimizer.step()
+                model.eval()
+                out_v = model(X_val)
+                acc_v = criterion(out_v, y_val.float().unsqueeze(1)).item()
+                if acc_v< best_acc_v:
+                    best_acc_v = acc_v
+                    early_stop_counter = 0
+                else:
+                    early_stop_counter+= 1
+                model.train()
+                if early_stop_counter>patience:
+                    breaked = True
+                    break
 
-            model.eval()
-            out_v = model(X_val)
-            acc_v = criterion(out_v, y_val.float().unsqueeze(1)).item()
-            if acc_v< best_acc_v:
-                best_acc_v = acc_v
-                early_stop_counter = 0
-            else:
-                early_stop_counter+= 1
-            model.train()
-            if early_stop_counter>patience:
-                breaked = True
+            if breaked:
                 break
-
-        if breaked:
-            break
 
             #loss_i.append(loss.item())
         #print(np.mean(loss_i))
     #end_time = time.time()
     #print(end_time-start_time)
 
-    model.eval()
-    torch.save(model.state_dict(), out_f_name)
+        model.eval()
+        torch.save(model.state_dict(), out_f_name)
     with torch.no_grad():
         weightp = model.fc2.weight.data + perturb
         weightn = model.fc2.weight.data - perturb
