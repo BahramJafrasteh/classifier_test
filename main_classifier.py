@@ -239,7 +239,9 @@ def cross_validation(Xx, Yy, kf, perturb, info_model, use_model=None, early_brea
         model.to(device)
         state_dict = model.state_dict()
         optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-
+    y_predps = []
+    y_predns = []
+    y_tests = []
     for r, [train_index, test_index] in enumerate(zip(*[train_indices, val_indices])):
         #if early_break and r ==1:
         #    break
@@ -247,11 +249,8 @@ def cross_validation(Xx, Yy, kf, perturb, info_model, use_model=None, early_brea
         X_train, X_test = Xx[train_index, :], Xx[test_index, :]
         y_train, y_test = Yy[train_index], Yy[test_index]
 
-        class_weights = y_train.shape[0] / (2 * torch.bincount(y_train.to(torch.int))[1])
-        criterion = nn.BCEWithLogitsLoss(pos_weight=class_weights)
-        out_f_name = os.path.join(dist_p, '{}_cv_{:03d}_rep_{}.pth'.format(use_model, r + 1, repeat_no))
-        if use_model=='lr':
 
+        if use_model=='lr':
 
             scaler = StandardScaler()
             X_train = scaler.fit_transform(X_train)
@@ -272,12 +271,19 @@ def cross_validation(Xx, Yy, kf, perturb, info_model, use_model=None, early_brea
             model.coef_ = coefn
             y_predn = model.predict(X_test)
 
+            y_predps.append(y_predp)
+            y_predns.append(y_predn)
+            y_tests.append(y_test)
+
             acc = accuracy_score(y_pred, y_test)
             #print(acc)
             accp = accuracy_score(y_predp, y_test)
             accn = accuracy_score(y_predn, y_test)
 
         elif use_model=='mlp':
+            class_weights = y_train.shape[0] / (2 * torch.bincount(y_train.to(torch.int))[1])
+            criterion = nn.BCEWithLogitsLoss(pos_weight=class_weights)
+            out_f_name = os.path.join(dist_p, '{}_cv_{:03d}_rep_{}.pth'.format(use_model, r + 1, repeat_no))
             # Calculate mean and standard deviation along the specified axis (usually axis=0)
             mean = X_train.mean(0)
             std = X_train.std(0)+1e-10
@@ -287,6 +293,10 @@ def cross_validation(Xx, Yy, kf, perturb, info_model, use_model=None, early_brea
             model.load_state_dict(state_dict) #reset model weights
             y_pred, y_predp, y_predn = train_perturb_evaluate_MLP_model(X_train,y_train, perturb, X_test, model, optimizer, criterion,
                            num_epochs=num_epochs,    batch_size = batch_size, device=device, out_f_name=out_f_name)
+            y_predps.append(y_predp)
+            y_predns.append(y_predn)
+            y_tests.append(y_test)
+
 
             acc = calc_accuracy(y_pred, y_test)
             accp = calc_accuracy(y_predp, y_test)
@@ -295,10 +305,16 @@ def cross_validation(Xx, Yy, kf, perturb, info_model, use_model=None, early_brea
         accneg.append(accn)
         accs.append(acc)
     if use_model=='mlp':
-        y_predn = y_predn.detach().cpu().numpy()
-        y_test = y_test.detach().cpu().numpy()
-        y_predp = y_predp.detach().cpu().numpy()
-    return accpos, accneg, [y_predp, y_predn, y_test]
+        y_predns = torch.stack(y_predns).ravel().detach().cpu().numpy()
+        y_predps = torch.stack(y_predps).ravel().detach().cpu().numpy()
+        y_tests = torch.stack(y_tests).ravel().detach().cpu().numpy()
+    else:
+        y_predns = np.stack(y_predns).ravel()
+        y_predps = np.stack(y_predps).ravel()
+        y_tests = np.stack(y_tests).ravel()
+        #y_test = y_test.detach().cpu().numpy()
+        #y_predp = y_predp.detach().cpu().numpy()
+    return accpos, accneg, [y_predps, y_predns, y_tests]
 
 def select_sample(ind_gender, size):
     inp1 = inputData[ind_gender, :]
@@ -409,7 +425,7 @@ if __name__ == '__main__':
     dataset_name = sys.argv[1]
     device_id=int(sys.argv[2])
     inputData, labels = get_data(dataset_name)
-    use_model = 'mlp'
+    use_model = 'lr'
 
     P = 100 # repeat the whole experiment P times
     Ss = [1, 4, 10, 15] # Repeat the K-fold cross-validation S times
