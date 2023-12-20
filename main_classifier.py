@@ -446,8 +446,8 @@ if __name__ == '__main__':
 
 
 
-    for el in list_total:
-        run_experiment(el)
+    #for el in list_total:
+    #    run_experiment(el)
 
     pool = mp.Pool(int(mp.cpu_count() //7))
     results = pool.map(run_experiment, list_total)
