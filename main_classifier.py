@@ -305,15 +305,13 @@ def cross_validation(Xx, Yy, kf, perturb, info_model, use_model=None, early_brea
         accneg.append(accn)
         accs.append(acc)
     if use_model=='mlp':
-        y_predn_all = torch.stack(y_predn_all).ravel().detach().cpu().numpy()
-        y_predp_all = torch.stack(y_predp_all).ravel().detach().cpu().numpy()
-        y_test_all = torch.stack(y_test_all).ravel().detach().cpu().numpy()
+        y_predn_all = torch.cat(y_predn_all,dim=0).ravel().detach().cpu().numpy()
+        y_predp_all = torch.cat(y_predp_all,dim=0).ravel().detach().cpu().numpy()
+        y_test_all = torch.cat(y_test_all,dim=0).ravel().detach().cpu().numpy()
     else:
-        y_predn_all = np.stack(y_predn_all).ravel()
-        y_predp_all = np.stack(y_predp_all).ravel()
-        y_test_all = np.stack(y_test_all).ravel()
-        #y_test = y_test.detach().cpu().numpy()
-        #y_predp = y_predp.detach().cpu().numpy()
+        y_predn_all = np.concatenate(y_predn_all,axis=0).ravel()
+        y_predp_all = np.concatenate(y_predp_all, axis=0).ravel()
+        y_test_all = np.concatenate(y_test_all, axis=0).ravel()
     return accpos, accneg, [y_predp_all, y_predn_all, y_test_all]
 
 def select_sample(ind_gender, size):
@@ -448,8 +446,8 @@ if __name__ == '__main__':
 
 
 
-    #for el in list_total:
-    #    run_experiment(el)
+    for el in list_total:
+        run_experiment(el)
 
     pool = mp.Pool(int(mp.cpu_count() //7))
     results = pool.map(run_experiment, list_total)
