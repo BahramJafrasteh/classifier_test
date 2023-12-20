@@ -423,7 +423,7 @@ if __name__ == '__main__':
     dataset_name = sys.argv[1]
     device_id=int(sys.argv[2])
     inputData, labels = get_data(dataset_name)
-    use_model = 'lr'
+    use_model = 'mlp'
 
     P = 100 # repeat the whole experiment P times
     Ss = [1, 4, 10, 15] # Repeat the K-fold cross-validation S times
