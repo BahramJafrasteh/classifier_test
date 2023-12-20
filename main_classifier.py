@@ -239,9 +239,9 @@ def cross_validation(Xx, Yy, kf, perturb, info_model, use_model=None, early_brea
         model.to(device)
         state_dict = model.state_dict()
         optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-    y_predps = []
-    y_predns = []
-    y_tests = []
+    y_predp_all = []
+    y_predn_all = []
+    y_test_all = []
     for r, [train_index, test_index] in enumerate(zip(*[train_indices, val_indices])):
         #if early_break and r ==1:
         #    break
@@ -271,9 +271,9 @@ def cross_validation(Xx, Yy, kf, perturb, info_model, use_model=None, early_brea
             model.coef_ = coefn
             y_predn = model.predict(X_test)
 
-            y_predps.append(y_predp)
-            y_predns.append(y_predn)
-            y_tests.append(y_test)
+            y_predp_all.append(y_predp)
+            y_predn_all.append(y_predn)
+            y_test_all.append(y_test)
 
             acc = accuracy_score(y_pred, y_test)
             #print(acc)
@@ -293,9 +293,9 @@ def cross_validation(Xx, Yy, kf, perturb, info_model, use_model=None, early_brea
             model.load_state_dict(state_dict) #reset model weights
             y_pred, y_predp, y_predn = train_perturb_evaluate_MLP_model(X_train,y_train, perturb, X_test, model, optimizer, criterion,
                            num_epochs=num_epochs,    batch_size = batch_size, device=device, out_f_name=out_f_name)
-            y_predps.append(y_predp)
-            y_predns.append(y_predn)
-            y_tests.append(y_test)
+            y_predp_all.append(y_predp)
+            y_predn_all.append(y_predn)
+            y_test_all.append(y_test)
 
 
             acc = calc_accuracy(y_pred, y_test)
@@ -305,16 +305,16 @@ def cross_validation(Xx, Yy, kf, perturb, info_model, use_model=None, early_brea
         accneg.append(accn)
         accs.append(acc)
     if use_model=='mlp':
-        y_predns = torch.stack(y_predns).ravel().detach().cpu().numpy()
-        y_predps = torch.stack(y_predps).ravel().detach().cpu().numpy()
-        y_tests = torch.stack(y_tests).ravel().detach().cpu().numpy()
+        y_predn_all = torch.stack(y_predn_all).ravel().detach().cpu().numpy()
+        y_predp_all = torch.stack(y_predp_all).ravel().detach().cpu().numpy()
+        y_test_all = torch.stack(y_test_all).ravel().detach().cpu().numpy()
     else:
-        y_predns = np.stack(y_predns).ravel()
-        y_predps = np.stack(y_predps).ravel()
-        y_tests = np.stack(y_tests).ravel()
+        y_predn_all = np.stack(y_predn_all).ravel()
+        y_predp_all = np.stack(y_predp_all).ravel()
+        y_test_all = np.stack(y_test_all).ravel()
         #y_test = y_test.detach().cpu().numpy()
         #y_predp = y_predp.detach().cpu().numpy()
-    return accpos, accneg, [y_predps, y_predns, y_tests]
+    return accpos, accneg, [y_predp_all, y_predn_all, y_test_all]
 
 def select_sample(ind_gender, size):
     inp1 = inputData[ind_gender, :]
