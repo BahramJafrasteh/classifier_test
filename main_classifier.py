@@ -106,6 +106,50 @@ def get_data(dataset_name):
             features_not_processed[:,i] -= model.coef_*headsize
         labels = df_total['DX_bl'].map({'AD':1}).fillna(0).values
         inputData = features_not_processed
+    elif dataset_name.lower()== 'hpc':
+
+        out_come = ['Language_Task_Acc','Language_Task_Median_RT']
+        nc = 25#15 or 25
+        generate_data = False
+
+        if generate_data:
+            if nc == 15:
+                folder_data ='HCP/node_timeseries/3T_HCP1200_MSMAll_d15_ts2/'
+            else:
+                folder_data ='HCP/node_timeseries/3T_HCP1200_MSMAll_d25_ts2/'
+            df_head = pd.read_csv('HCP/unrestricted_qingyuz_10_5_2023_15_43_8.csv')
+            df_head = df_head.dropna(subset=[out_come[0]])
+            df_head = df_head.dropna(subset=[out_come[1]])
+            mapping = {'M': 1, 'F': 0}
+            df_head['Gender'] = df_head['Gender'].map(mapping)
+            inpd = []
+            for sb in df_head['Subject']:
+                s_df = df_head[df_head['Subject']==sb]
+                file = os.path.join(folder_data, str(sb)+'.txt')
+                if os.path.isfile(file):
+                    with open(file, 'rb') as f:
+                        L = f.readlines()
+                        arr = np.stack([np.array(list(map(float, e.decode('utf8').strip().split()))) for e in L])
+                        corrM = np.corrcoef(arr, rowvar=False)
+                        upper_triangle = corrM[np.triu_indices_from(corrM, k=1)]
+                        conc = np.concatenate([upper_triangle, s_df['Gender'].values, s_df[out_come[0]].values, s_df[out_come[1]].values])
+                        inpd.append(conc)
+            xy = np.stack(inpd)
+            df_final_xy = pd.DataFrame(xy)
+            cols = ['var_' + str(e) for e in range(len(df_final_xy.columns))]
+            cols[-1] = out_come[1]
+            cols[-2] = out_come[0]
+            cols[-3]= 'Gender'
+            df_final_xy.columns = cols
+            df_final_xy.to_csv('HCP/final_xy_{}.csv'.format(nc), index=None, index_label=None)
+        df_final_xy = pd.read_csv('HCP/final_xy_{}.csv'.format(nc))
+        cols = ['var_' + str(e) for e in range(len(df_final_xy.columns))]
+        cols[-1] = out_come[1]
+        cols[-2] = out_come[0]
+        cols[-3] = 'Gender'
+        inputData = df_final_xy[cols[:-2]].values
+        labels = df_final_xy[out_come[0]].values
+
     return inputData, labels
 
 def McNemar(y_predp, y_predn, y_test):
@@ -205,7 +249,7 @@ def cross_validation(Xx, Yy, kf, perturb, info_model, use_model=None, early_brea
 
         class_weights = y_train.shape[0] / (2 * torch.bincount(y_train.to(torch.int))[1])
         criterion = nn.BCEWithLogitsLoss(pos_weight=class_weights)
-
+        out_f_name = os.path.join(dist_p, '{}_cv_{:03d}_rep_{}.pth'.format(use_model, r + 1, repeat_no))
         if use_model=='lr':
 
 
@@ -241,7 +285,6 @@ def cross_validation(Xx, Yy, kf, perturb, info_model, use_model=None, early_brea
             X_train = (X_train-mean)/(std)
             X_test = (X_test-mean)/(std)
             model.load_state_dict(state_dict) #reset model weights
-            out_f_name = os.path.join(dist_p,'{}_cv_{:03d}_rep_{}.pth'.format(use_model, r+1, repeat_no))
             y_pred, y_predp, y_predn = train_perturb_evaluate_MLP_model(X_train,y_train, perturb, X_test, model, optimizer, criterion,
                            num_epochs=num_epochs,    batch_size = batch_size, device=device, out_f_name=out_f_name)
 
@@ -319,21 +362,15 @@ def run_experiment(info):
         dist_p = '/datos/Bahram/classifiers/{}_{}/{}'.format(dataset_name, use_model, "_".join([str(el) for el in info]))
         if not os.path.exists(dist_p):
             os.makedirs(dist_p)
+        file_split = '{}/XY_{}.pkl'.format(dist_p, rp)
+        if not os.path.isfile(file_split):
+            with open(file_split,'wb') as file:
+                pickle.dump([X_sel, Y_sel, train_indices, val_indices], file)
+        else:
+            ### for reading
+            with open(file_split,'rb') as file:
+                [X_sel, Y_sel, train_indices, val_indices] = pickle.load(file)
 
-        with h5py.File('{}/XY_{}.h5'.format(dist_p, rp), 'w') as file:
-            # Create datasets and write data to them
-            file.create_dataset('X_sel', data=X_sel)
-            file.create_dataset('Y_sel', data=Y_sel)
-            file.create_dataset('train_indices', data=train_indices)
-            file.create_dataset('val_indices', data=val_indices)
-        """
-        for reading
-        with h5py.File('{}/XY.h5'.format(dist_p), 'r') as file:
-            X_sel = np.array(file['X_sel'])
-            Y_sel = np.array(file['Y_sel'])
-            train_indices = np.array(file['train_indices'])
-            val_indices = np.array(file['val_indices'])
-        """
         accpos, accneg, [y_predp, y_predn, y_test] = cross_validation(X_sel, Y_sel, [train_indices, val_indices], perturb, info_model, use_model=use_model, early_break=False, dist_p=dist_p, repeat_no = rp)
         all_accps.append(np.array(accpos))
         all_accneg.append(np.array(accneg))
