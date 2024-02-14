@@ -1,4 +1,7 @@
 __author__ = 'Bahram Jafrasteh'
+
+import time
+
 # based on matlab code written by Qingyu Zhao
 import torch
 import torch.nn as nn
@@ -17,6 +20,7 @@ import compare_auc_delong_xu
 import sys
 from torchvision import transforms
 from MLP_model import MLPClassifier, train_perturb_evaluate_MLP_model, calc_accuracy
+from sklearn.decomposition import PCA
 
 
 
@@ -149,6 +153,54 @@ def get_data(dataset_name):
         cols[-3] = 'Gender'
         inputData = df_final_xy[cols[:-2]].values
         labels = df_final_xy[out_come[0]].values
+    elif dataset_name.lower() == 'abide':
+        generate_data = True
+        nc = 200
+        if generate_data:
+            if nc==116:
+                abide_directory = '/home/neonatal/pycharmProject/classifiers/abide/Outputs/cpac/nofilt_noglobal/rois_aal'
+            elif nc==200:
+                abide_directory = '/home/neonatal/pycharmProject/classifiers/abide/cpac/nofilt_noglobal/rois_cc200'
+            file_info = '/home/neonatal/pycharmProject/classifiers/abide/Phenotypic_V1_0b_preprocessed1.csv'
+            df_head = pd.read_csv(file_info)
+            list_f = os.listdir(abide_directory)
+            list_f = [f for f in list_f if f[-2:].lower()=='1d']
+            inpd = []
+
+            for file in list_f:
+                s_df = df_head[df_head['FILE_ID'] == file.split('_rois')[0]]
+                with open(os.path.join(abide_directory, file), 'rb') as f:
+                    L = f.readlines()
+                arr = np.stack([np.array(list(map(float, e.decode('utf8').strip().split()))) for e in L[1:]])
+                # Check for constant columns
+                constant_columns = np.all(np.diff(arr, axis=0) == 0, axis=0)
+                if constant_columns.sum()>0:#if there is a constant row pass the id
+                    continue
+
+                corrM = np.corrcoef(arr, rowvar=False)
+                upper_triangle = corrM[np.triu_indices_from(corrM, k=1)]
+
+                conc = np.concatenate(
+                    [upper_triangle, s_df['AGE_AT_SCAN'].values, s_df['SEX'].values-1,
+                    s_df['DX_GROUP'].values])
+                inpd.append(conc)
+            xy = np.stack(inpd)
+            df_final_xy = pd.DataFrame(xy)
+            cols = ['var_' + str(e) for e in range(len(df_final_xy.columns))]
+            cols[-1] = 'DX_GROUP'
+            cols[-2] = 'SEX'
+            cols[-3] = 'AGE_AT_SCAN'
+            df_final_xy.columns = cols
+            df_final_xy.to_csv('abide/final_xy_{}.csv'.format(nc), index=None, index_label=None)
+
+        df_final_xy = pd.read_csv('abide/final_xy_{}.csv'.format(nc))
+        cols = list(df_final_xy.columns)
+        inputData = df_final_xy[cols[:-1]].values
+        labels = df_final_xy['DX_GROUP'].values-1
+
+
+
+
 
     return inputData, labels
 
@@ -217,23 +269,43 @@ def cross_validation(Xx, Yy, kf, perturb, info_model, use_model=None, early_brea
         if device_id>=0:
             if torch.cuda.is_available():
                 #device = torch.device('cuda:{}'.format(device_id))
-                if 2>1:
+                if 3>2:
+                    wait_sig = True
                     import GPUtil
-                    gpus = GPUtil.getGPUs()
-                    optimal = None
-                    for i, gpu in enumerate(gpus):
-                        used = gpu.memoryUsed/gpu.memoryTotal
-                        if used<0.9:
-                            optimal = i
+                    while True:
+                        gpus = GPUtil.getGPUs()
+                        gpus = [el for el in gpus if el.id != 0]
+                        optimal = None
+                        used_all = []
+                        for i, gpu in enumerate(gpus):
+                            used = gpu.memoryUsed/gpu.memoryTotal
+                            used_all.append(used)
+                        ind_free = (np.array(used_all)<0.9)
+                        wait_sig = False
+                        if (ind_free).sum()>1:
+                            optimal = np.random.choice(len(gpus))
+                            optimal = gpus[optimal].id
+                        elif ind_free.sum()==1:
+                            optimal =np.argwhere(ind_free).item()
+                            optimal = gpus[optimal].id
+                        else:
+                            wait_sig = True
+                        if not wait_sig:
                             break
-                    if optimal is not None:
-                        device = torch.device('cuda:{}'.format(optimal))
-
-        Xx = torch.from_numpy(Xx.astype(np.float32)).to(device)
-        Yy = torch.from_numpy(Yy.astype(np.float32)).to(device)
+                        else:
+                            time.sleep(20)
+                    #if optimal is not None:
+                    device = torch.device('cuda:{}'.format(optimal))
+        if dataset_name.lower()!='none':
+            Xx = torch.from_numpy(Xx.astype(np.float32)).to(device)
+            Yy = torch.from_numpy(Yy.astype(np.float32)).to(device)
+        else:
+            Yy = torch.from_numpy(Yy.astype(np.float32)).to(device)
         perturb = torch.from_numpy(perturb.astype(np.float32)).to(device)
-
+        #if dataset_name.lower()!='abide':
         input_size = Xx.shape[1]
+        #else:
+        #    input_size = 256
         output_size = 1
         model = MLPClassifier(input_size, hidden_size, output_size)
         model.to(device)
@@ -242,13 +314,24 @@ def cross_validation(Xx, Yy, kf, perturb, info_model, use_model=None, early_brea
     y_predp_all = []
     y_predn_all = []
     y_test_all = []
+    Pv_mcnemar = []
+    Pv_delong = []
+
     for r, [train_index, test_index] in enumerate(zip(*[train_indices, val_indices])):
         #if early_break and r ==1:
         #    break
         #r+=1
         X_train, X_test = Xx[train_index, :], Xx[test_index, :]
         y_train, y_test = Yy[train_index], Yy[test_index]
-
+        #if dataset_name.lower()=='abide':
+        #    n_components =256
+        #    pca = PCA(n_components=n_components)
+        #    mean_x = X_train.mean(0)
+        #    std_x = X_train.std(0)
+        #    X_train = pca.fit_transform((X_train - mean_x) / std_x)
+        #    X_test = pca.transform((X_test - mean_x) / std_x)
+        #    X_train = torch.from_numpy(X_train.astype(np.float32)).to(device)
+        #    X_test = torch.from_numpy(X_test.astype(np.float32)).to(device)
 
         if use_model=='lr':
 
@@ -256,8 +339,21 @@ def cross_validation(Xx, Yy, kf, perturb, info_model, use_model=None, early_brea
             X_train = scaler.fit_transform(X_train)
             X_test = scaler.transform(X_test)
 
-            model = LogisticRegression(penalty='l2', solver='lbfgs', C=1.0, max_iter=1000)
-            model.fit(X_train, y_train.squeeze())
+
+
+
+            out_f_name = os.path.join(dist_p, '{}_cv_{:03d}_rep_{}.pkl'.format(use_model, r + 1, repeat_no))
+            if not os.path.isfile(out_f_name):
+                model = LogisticRegression(penalty='l2', solver='lbfgs', C=1.0, max_iter=1000)
+                model.fit(X_train, y_train.squeeze())
+                with open(out_f_name, 'wb') as file:
+                    pickle.dump(model, file)
+            else:
+                ### for reading
+                with open(out_f_name, 'rb') as file:
+                    model = pickle.load(file)
+
+
 
             y_pred = model.predict(X_test)
             coef_ = model.coef_.copy()
@@ -292,27 +388,47 @@ def cross_validation(Xx, Yy, kf, perturb, info_model, use_model=None, early_brea
             X_test = (X_test-mean)/(std)
             model.load_state_dict(state_dict) #reset model weights
             y_pred, y_predp, y_predn = train_perturb_evaluate_MLP_model(X_train,y_train, perturb, X_test, model, optimizer, criterion,
-                           num_epochs=num_epochs,    batch_size = batch_size, device=device, out_f_name=out_f_name)
-            y_predp_all.append(y_predp)
-            y_predn_all.append(y_predn)
-            y_test_all.append(y_test)
-
+                           num_epochs=num_epochs,    batch_size = batch_size, device=device, out_f_name=out_f_name, perturb_mode=perturb_mode)
 
             acc = calc_accuracy(y_pred, y_test)
             accp = calc_accuracy(y_predp, y_test)
             accn = calc_accuracy(y_predn, y_test)
+            if perform_test_sample_size:
+                y_predp = y_predp.detach().cpu().numpy()
+                y_predn = y_predn.detach().cpu().numpy()
+                y_test = y_test.detach().cpu().numpy()
+
+                # perfrom McNemar test
+                Pv_mcnemar.append(McNemar(y_predp, y_predn, y_test))
+                # Perform DeLong's test
+                try:
+                    pvalue_delong = DeLong(y_predp, y_predn, y_test)
+                    Pv_delong.append(pvalue_delong)
+                except:
+                    pass
+
+            else:
+                y_predp_all.append(y_predp)
+                y_predn_all.append(y_predn)
+                y_test_all.append(y_test)
+
+
+
         accpos.append(accp)
         accneg.append(accn)
         accs.append(acc)
-    if use_model=='mlp':
-        y_predn_all = torch.cat(y_predn_all,dim=0).ravel().detach().cpu().numpy()
-        y_predp_all = torch.cat(y_predp_all,dim=0).ravel().detach().cpu().numpy()
-        y_test_all = torch.cat(y_test_all,dim=0).ravel().detach().cpu().numpy()
+    if perform_test_sample_size:
+        return accpos, accneg, accs, [np.nanmean(Pv_mcnemar), np.nanmean(Pv_delong)]
     else:
-        y_predn_all = np.concatenate(y_predn_all,axis=0).ravel()
-        y_predp_all = np.concatenate(y_predp_all, axis=0).ravel()
-        y_test_all = np.concatenate(y_test_all, axis=0).ravel()
-    return accpos, accneg, [y_predp_all, y_predn_all, y_test_all]
+        if use_model=='mlp':
+            y_predn_all = torch.cat(y_predn_all,dim=0).ravel().detach().cpu().numpy()
+            y_predp_all = torch.cat(y_predp_all,dim=0).ravel().detach().cpu().numpy()
+            y_test_all = torch.cat(y_test_all,dim=0).ravel().detach().cpu().numpy()
+        else:
+            y_predn_all = np.concatenate(y_predn_all,axis=0).ravel()
+            y_predp_all = np.concatenate(y_predp_all, axis=0).ravel()
+            y_test_all = np.concatenate(y_test_all, axis=0).ravel()
+        return accpos, accneg, accs, [y_predp_all, y_predn_all, y_test_all]
 
 def select_sample(ind_gender, size):
     inp1 = inputData[ind_gender, :]
@@ -343,17 +459,45 @@ def run_experiment(info):
     ind_gender = (labels==1)
     x1,y1=select_sample(ind_gender, N//2)
     x2, y2=select_sample(~ind_gender, N-x1.shape[0])
-
+    info2 = [el for el in info]
+    info2[1] = 5
+    dist_p = '/datos/Bahram/classifiers/{}_{}/{}'.format(dataset_name, use_model, "_".join([str(el) for el in info2]))
+    if not os.path.exists(dist_p):
+        os.makedirs(dist_p)
     X_sel = np.concatenate([x1,x2])
     Y_sel = np.concatenate([y1,y2])
+    if dataset_name.lower()=='abide':
+        file_int = '{}/XY_{}.pkl'.format(dist_p, 0)
+        if os.path.isfile(file_int):
+            with open(file_int,'rb') as file:
+                [X_sel, Y_sel, _, _] = pickle.load(file)
+        else:
+            n_components = 256
+            pca = PCA(n_components=n_components)
+            mean_x = X_sel.mean(0)
+            std_x = X_sel.std(0)
+            X_sel = pca.fit_transform((X_sel - mean_x) / std_x)
+
     feature = X_sel.shape[1] #number of features
     if use_model=='lr':
-        perturb = np.random.randn(1, feature) / E  # perturbation matrix
+        if perturb_mode=='gaussian':
+            perturb = np.random.randn(1, feature) / E  # perturbation matrix
+        elif perturb_mode=='uniform':
+            perturb_factor = 1./ E
+            perturb = (2 * np.random.rand(*(1, feature)) - 1)* perturb_factor  # perturbation matrix
         info_model = [None]
     elif use_model=='mlp':
-        hidden_size, learning_rate, num_epochs, batch_size=128, 0.001, 400, 1000
+        if dataset_name.lower()!='abide':
+            hidden_size, learning_rate, num_epochs, batch_size=128, 0.001, 400, 1000
+        else:
+            hidden_size, learning_rate, num_epochs, batch_size=128, 0.001, 400, 1000
         info_model = [hidden_size, learning_rate, num_epochs, batch_size]
-        perturb = np.random.randn(1, hidden_size) / E # for the last layer
+        if perturb_mode=='gaussian':
+            perturb = np.random.randn(1, hidden_size) / E  # for the last layer
+        elif perturb_mode=='uniform':
+            perturb_factor = 1./ E
+            perturb = (2 * np.random.rand(*(1, hidden_size)) - 1)* perturb_factor   # perturbation matrix
+
 
 
 
@@ -361,6 +505,8 @@ def run_experiment(info):
     all_accneg = []
     Pv_mcnemar = []
     Pv_delong = []
+    info_pvs = []
+    all_acc_non_perturb =[]
     for rp in range(S):
         # stratified k-fold cross validation
         kf = StratifiedKFold(n_splits=K, shuffle=True)
@@ -373,9 +519,9 @@ def run_experiment(info):
         for train_index, val_index in kf.split(X_sel, Y_sel):
             train_indices.append(train_index)
             val_indices.append(val_index)
-        dist_p = '/datos/Bahram/classifiers/{}_{}/{}'.format(dataset_name, use_model, "_".join([str(el) for el in info]))
-        if not os.path.exists(dist_p):
-            os.makedirs(dist_p)
+
+        #info[1] = 5
+
         file_split = '{}/XY_{}.pkl'.format(dist_p, rp)
         if not os.path.isfile(file_split):
             with open(file_split,'wb') as file:
@@ -384,25 +530,28 @@ def run_experiment(info):
             ### for reading
             with open(file_split,'rb') as file:
                 [X_sel, Y_sel, train_indices, val_indices] = pickle.load(file)
+        if perform_test_sample_size:
+            accpos, accneg, acc_non_perturb, [pv_mcnemar,pvalue_delong] = cross_validation(X_sel, Y_sel, [train_indices, val_indices], perturb, info_model, use_model=use_model, early_break=False, dist_p=dist_p, repeat_no = rp)
+            Pv_mcnemar.append(pv_mcnemar)
+            Pv_delong.append(pvalue_delong)
+        else:
+            accpos, accneg, acc_non_perturb, [y_predp, y_predn, y_test] = cross_validation(X_sel, Y_sel, [train_indices, val_indices], perturb, info_model, use_model=use_model, early_break=False, dist_p=dist_p, repeat_no = rp)
 
-        accpos, accneg, [y_predp, y_predn, y_test] = cross_validation(X_sel, Y_sel, [train_indices, val_indices], perturb, info_model, use_model=use_model, early_break=False, dist_p=dist_p, repeat_no = rp)
+            # perfrom McNemar test
+            pv_mcnemar = McNemar(y_predp, y_predn, y_test)
+            Pv_mcnemar.append(pv_mcnemar)
+            # Perform DeLong's test
+            try:
+                pvalue_delong = DeLong(y_predp, y_predn, y_test)
+                Pv_delong.append(pvalue_delong)
+            except:
+                pass
         all_accps.append(np.array(accpos))
         all_accneg.append(np.array(accneg))
-
-        # perfrom McNemar test
-        pv_mcnemar = McNemar(y_predp, y_predn, y_test)
-        Pv_mcnemar.append(pv_mcnemar)
-        # Perform DeLong's test
-        try:
-            pvalue_delong = DeLong(y_predp, y_predn, y_test)
-            Pv_delong.append(pvalue_delong)
-        except:
-            pass
-
-
+        all_acc_non_perturb.append(np.array(acc_non_perturb))
     all_accps = np.stack(all_accps).ravel()
     all_accneg = np.stack(all_accneg).ravel()
-
+    all_acc_non_perturb = np.stack(all_acc_non_perturb).ravel()
 
     # perform t_test
     p_value_t_test = t_test(all_accps, all_accneg)
@@ -410,7 +559,8 @@ def run_experiment(info):
     # perform corrected t_test
     p_value_corrected_t_test = corrected_t_test(all_accps, all_accneg, N, K)
 
-    return [np.nanmean(Pv_mcnemar), np.nanmean(Pv_delong), p_value_t_test, p_value_corrected_t_test]
+
+    return [np.nanmean(Pv_mcnemar), np.nanmean(Pv_delong), p_value_t_test, p_value_corrected_t_test, all_accps, all_accneg, all_acc_non_perturb]
 
 
 
@@ -418,7 +568,8 @@ def run_experiment(info):
 
 if __name__ == '__main__':
 
-    global inputData, labels, device_id, dataset_name, use_model
+    global inputData, labels, device_id, dataset_name, use_model,perform_test_sample_size, perturb_mode
+    perform_test_sample_size = False
 
     dataset_name = sys.argv[1]
     device_id=int(sys.argv[2])
@@ -426,34 +577,52 @@ if __name__ == '__main__':
     use_model = 'mlp'
 
     P = 100 # repeat the whole experiment P times
-    Ss = [1, 4, 10, 15] # Repeat the K-fold cross-validation S times
-    Ks = [2, 10, 50, 100, 200, 400] # K-fold CV
 
     #Ss=[1]
-
+    perturb_mode = 'uniform' #gaussian
     #Ks=[100]
-    Es = [5] # Level of perturbation
+    #Es = [1,2,3,4,5,6] # Level of perturbation
+    Es = [1]
     Ns = [1000] # Number of samples
+
+    Ss = [1, 4, 10, 15] # Repeat the K-fold cross-validation S times
+    #Ss=[10]
+    #
+    #Ss = [2,6,20]
+    Ks = [2, 10, 50, 100, 200]#, 400] # K-fold CV
+    #Ks = [2]
+    if dataset_name.lower()=='adni' or dataset_name.lower()=='abide':
+        Ks = [2, 5, 10, 25, 50, 75, 100, 150, 200, 300]  # , 400] # K-fold CV
+        Ss = [1, 2, 4, 6, 10, 15, 20]  # Repeat the K-fold cross-validation S times
+    #Ks = [5,25, 75, 150, 300]
+
+
 
     list_total = []
     for p in range(P):
         for k in Ks:
             for s in Ss:
-                for e in Es:
+                for e in Es: 
                     for n in Ns:
                         list_total.append([k, e, s, n, p])
 
 
 
-
+    # to debug
     #for el in list_total:
     #    run_experiment(el)
 
-    pool = mp.Pool(int(mp.cpu_count() //7))
+    pool = mp.Pool(int(mp.cpu_count()//8 ))
     results = pool.map(run_experiment, list_total)
     dictionary = defaultdict(list)
     for i, el in enumerate(list_total):
         dictionary[i] = [el, results[i]]
     # write the results to a file
-    with open('{}_perturbation_{}_sample_{}_model_{}.pkl'.format(dataset_name, Es[0], Ns[0], use_model), 'wb') as file:
+
+    file_out = '{}_perturbation_{}_sample_{}_model_{}_pert_{}.pkl'.format(dataset_name, Es[0], Ns[0], use_model, perturb_mode)
+    if len(Es) > 1:
+        file_out = '{}_perturbation_all_sample_{}_model_{}_pert_{}.pkl'.format(dataset_name, Ns[0], use_model, perturb_mode)
+    if perform_test_sample_size:
+        file_out = '{}_perturbation_{}_sample_{}_model_{}_testsamplesize.pkl'.format(dataset_name, Es[0], Ns[0], use_model)
+    with open(file_out, 'wb') as file:
         pickle.dump(dictionary, file)
