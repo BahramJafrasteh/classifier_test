@@ -25,7 +25,7 @@ class MLPClassifier(nn.Module):
 
 # Function to train the model
 def train_perturb_evaluate_MLP_model(X_input, y_input, perturb, X_test, model, optimizer,  criterion,
-                           num_epochs=100,    batch_size = 256, device=None, out_f_name=None):
+                           num_epochs=100,    batch_size = 256, device=None, out_f_name=None, perturb_mode='gaussian'):
 
     def binarize(y, thrs):
         ind= y<thrs
@@ -33,7 +33,7 @@ def train_perturb_evaluate_MLP_model(X_input, y_input, perturb, X_test, model, o
         y[~ind]=1
         return y
     if os.path.isfile(out_f_name):
-        state_dict0 = torch.load(out_f_name)
+        state_dict0 = torch.load(out_f_name,map_location=device)
         model.load_state_dict(state_dict0)  # reset model weights
         model.eval()
     else:
@@ -80,8 +80,12 @@ def train_perturb_evaluate_MLP_model(X_input, y_input, perturb, X_test, model, o
         model.eval()
         torch.save(model.state_dict(), out_f_name)
     with torch.no_grad():
-        weightp = model.fc2.weight.data + perturb
-        weightn = model.fc2.weight.data - perturb
+        if perturb_mode == 'gaussian':
+            weightp = model.fc2.weight.data + perturb
+            weightn = model.fc2.weight.data - perturb
+        elif perturb_mode == 'uniform':
+            weightp = model.fc2.weight.data + perturb
+            weightn = model.fc2.weight.data - perturb
         y_pred = model(X_test)  # orignal model
         model.fc2.weight.data = weightp
         y_predp = model(X_test)  # perturbated positive
