@@ -1,7 +1,8 @@
 # "Is Your Classifier Better than Mine? Pitfalls in Statistical Tests for Model Comparison by Cross-Validation"
 
-This document explains how p-values can be influenced by various factors, including the number of cross-validations (CV), repetitions, and sample sizes.
 
+The manuscript explains how p-values can be influenced by various factors, including the number of cross-validations (CV), repetitions, and sample sizes.
+The code to reproduce the results is here.
 ---
 
 ## Table of Contents
