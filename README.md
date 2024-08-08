@@ -34,7 +34,7 @@ Installing the is straightforward. Follow these steps:
     ```bash
     python main_classifier --dataset_name <dataset> --model_name <model_type>
 Replace <dataset> with the name of the dataset you wish to process (adni, abide, or abcd5 for ADNI, ABIDE, and ABCD datasets, respectively).
-Replace <model_type> with the desired model type (e.g., MLP or logistic regression).
+Replace <model_type> with the desired model type (e.g., 'mlp' for MLP or 'lr' for logistic regression).
 The results will be saved in a `.pkl` file, which can be used for visualizing and creating plots.
 
 
