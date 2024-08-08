@@ -1,6 +1,6 @@
 __author__ = 'Bahram Jafrasteh'
 
-import time
+
 
 # based on matlab code written by Qingyu Zhao
 import torch
@@ -11,21 +11,22 @@ import numpy as np
 import multiprocessing as mp
 from collections import defaultdict
 import pickle
-from sklearn.svm import LinearSVC
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import accuracy_score
 from sklearn.linear_model import LogisticRegression, LinearRegression
 from sklearn.model_selection import KFold, StratifiedKFold
 import compare_auc_delong_xu
 import sys
-from torchvision import transforms
 from MLP_model import MLPClassifier, train_perturb_evaluate_MLP_model, calc_accuracy
 from sklearn.decomposition import PCA
-
-
-
 import pandas as pd
+
 def get_data(dataset_name):
+    """
+    Preparing the data to introduce them into the model
+    :param dataset_name: name of the dataset
+    :return: X (features) and y (labels)
+    """
     if dataset_name.lower()=='abcd5':
 
 
@@ -39,8 +40,7 @@ def get_data(dataset_name):
         sub_df_aseg = df_aseg[df_aseg['eventname']=='baseline_year_1_arm_1']
         sub_df_demo = df_demo[df_demo['eventname']=='baseline_year_1_arm_1']
 
-        #merged_df = pd.merge(df_demo, df_thk, on='src_subject_id')
-        #merged_df[[el for el in list(df_thk.columns) + ['demo_sex_v2'] if el != 'eventname']]
+
         subject_id = sub_df_thk['src_subject_id'].values
         sub_df_thk = sub_df_thk.iloc[:, 2:70]
 
@@ -97,6 +97,7 @@ def get_data(dataset_name):
          'ST32CV', 'ST24CV', 'ST85TA', 'ST99TA', 'ST99CV', 'ST58TA', 'ST24TA', 'ST50CV', 'ST59CV', 'ST12SV', 'ST130CV',
          'ST40CV', 'ST44CV', 'ST52CV', 'ST109CV', 'ST72TA', 'ST31TA', 'ST83CV', 'ST90TA', 'ST90CV', 'ST89SV', 'ST83TA',
          'ST85CV', 'ST88SV', 'ST52TA', 'ST71SV', 'ST40TA', 'ST117TA', 'ST103TA', 'ST117CV', 'AGE', 'PTGENDER', 'DX_bl', 'ICV']
+        #'ST78SV', 'ST19SV'
 
 
         df_total = df_total[feature_names]
@@ -154,14 +155,14 @@ def get_data(dataset_name):
         inputData = df_final_xy[cols[:-2]].values
         labels = df_final_xy[out_come[0]].values
     elif dataset_name.lower() == 'abide':
-        generate_data = True
+        generate_data = False
         nc = 200
         if generate_data:
             if nc==116:
-                abide_directory = '/home/neonatal/pycharmProject/classifiers/abide/Outputs/cpac/nofilt_noglobal/rois_aal'
+                abide_directory = 'abide/Outputs/cpac/nofilt_noglobal/rois_aal'
             elif nc==200:
-                abide_directory = '/home/neonatal/pycharmProject/classifiers/abide/cpac/nofilt_noglobal/rois_cc200'
-            file_info = '/home/neonatal/pycharmProject/classifiers/abide/Phenotypic_V1_0b_preprocessed1.csv'
+                abide_directory = 'abide/cpac/nofilt_noglobal/rois_cc200'
+            file_info = 'abide/Phenotypic_V1_0b_preprocessed1.csv'
             df_head = pd.read_csv(file_info)
             list_f = os.listdir(abide_directory)
             list_f = [f for f in list_f if f[-2:].lower()=='1d']
@@ -198,15 +199,17 @@ def get_data(dataset_name):
         inputData = df_final_xy[cols[:-1]].values
         labels = df_final_xy['DX_GROUP'].values-1
 
-
-
-
-
     return inputData, labels
 
 def McNemar(y_predp, y_predn, y_test):
+    """
+    compute the p-value of McNemar test
+    :param y_predp: prediction of positively perturbed model
+    :param y_predn: prediction of negatively perturbed model
+    :param y_test: observed values
+    :return: p-value of the test
+    """
     # Create a contingency table
-
     table = [[sum((y_predp == y_test) & (y_predn == y_test)),
                           sum((y_predp == y_test) & (y_predn != y_test))],
                          [sum((y_predp != y_test) & (y_predn == y_test)),
@@ -217,12 +220,25 @@ def McNemar(y_predp, y_predn, y_test):
     return results.pvalue
 
 def DeLong(y_predp, y_predn, y_test):
+    """
+    compute the p-value of DeLong test
+    :param y_predp: prediction of positively perturbed model
+    :param y_predn: prediction of negatively perturbed model
+    :param y_test: observed values
+    :return: p-value of the test
+    """
     # Perform DeLong's test
     log_p = compare_auc_delong_xu.delong_roc_test(
         y_test.squeeze().astype('int'), y_predn.squeeze(), y_predp.squeeze())
     return np.exp(log_p).item()
 
 def t_test(accp , accn):
+    """
+    compute the p-value of the Uncorrected t-test
+    :param accp: accuracy of positively perturbed model
+    :param accn:  accuracy of negatively perturbed model
+    :return: p-value of the t-test
+    """
     from scipy.stats import ttest_rel
     _, p_value = ttest_rel(accp, accn)
     return p_value
@@ -231,15 +247,14 @@ def t_test(accp , accn):
 
 def corrected_t_test(accp , accn, N, K):
     """
-    perform corrected t-test
-    :param accp: accuracy 1
-    :param accn: accuracy 2
+    compute the p-value of the Corrected t-test
+    :param accp: accuracy of positively perturbed model
+    :param accn: accuracy of negatively perturbed model
     :param N: total number of dataset
     :param K: number of folds
-    :return:
+    :return: p-value of the corrected t-test
     """
     from scipy.stats import t
-
     accd = accp - accn
     accm = np.mean(accd)
     n = len(accd)
@@ -249,89 +264,62 @@ def corrected_t_test(accp , accn, N, K):
     t_static =  accm / np.sqrt(sigma2_mod)
     return t.cdf(-abs(t_static),n-1)
 
-def cross_validation(Xx, Yy, kf, perturb, info_model, use_model=None, early_break=False, dist_p=None, repeat_no=0):
+def cross_validation(Xx, Yy, train_val_ind, perturb, info_model, use_model=None, early_break=False, dist_p=None, repeat_no=0):
     """
     Performing K-fold cross validaiton
-    :param inputData: X
-    :param labels: T
-    :param kf: kfold
-    :param perturb: perturbation matrix
-    :return: accuracies and last prediction
+    :param Xx: input features
+    :param Yy: label
+    :param train_val_ind: indices of training and validation for different KF
+    :param perturb: perturbation vectors
+    :param info_model: information of the model
+    :param use_model: 'lr' or 'mlp'
+    :param early_break:
+    :param dist_p: direction to save
+    :param repeat_no: index of repetition of CV
+    :return:
     """
+
+
+    if len(perturb)> 1:
+        perturb1, perturb2 = perturb # for two completely random perturbation
+    else:
+        perturb1 = perturb[0]
+        perturb2 = None
     accpos = []
     accneg = []
     accs = []
-    #r = 0
-    [train_indices, val_indices] = kf
+    accs_train = []
+
+    [train_indices, val_indices] = train_val_ind
     if use_model=='mlp':
         hidden_size, learning_rate, num_epochs, batch_size = info_model
-        device = torch.device('cpu')
-        if device_id>=0:
-            if torch.cuda.is_available():
-                #device = torch.device('cuda:{}'.format(device_id))
-                if 3>2:
-                    wait_sig = True
-                    import GPUtil
-                    while True:
-                        gpus = GPUtil.getGPUs()
-                        gpus = [el for el in gpus if el.id != 0]
-                        optimal = None
-                        used_all = []
-                        for i, gpu in enumerate(gpus):
-                            used = gpu.memoryUsed/gpu.memoryTotal
-                            used_all.append(used)
-                        ind_free = (np.array(used_all)<0.9)
-                        wait_sig = False
-                        if (ind_free).sum()>1:
-                            optimal = np.random.choice(len(gpus))
-                            optimal = gpus[optimal].id
-                        elif ind_free.sum()==1:
-                            optimal =np.argwhere(ind_free).item()
-                            optimal = gpus[optimal].id
-                        else:
-                            wait_sig = True
-                        if not wait_sig:
-                            break
-                        else:
-                            time.sleep(20)
-                    #if optimal is not None:
-                    device = torch.device('cuda:{}'.format(optimal))
+        device = torch.device('cpu') # use cpu (one can use gpu too)
+
         if dataset_name.lower()!='none':
             Xx = torch.from_numpy(Xx.astype(np.float32)).to(device)
             Yy = torch.from_numpy(Yy.astype(np.float32)).to(device)
         else:
             Yy = torch.from_numpy(Yy.astype(np.float32)).to(device)
-        perturb = torch.from_numpy(perturb.astype(np.float32)).to(device)
-        #if dataset_name.lower()!='abide':
+        perturb1 = torch.from_numpy(perturb1.astype(np.float32)).to(device)
+        if perturb2 is not None:
+            perturb2 = torch.from_numpy(perturb2.astype(np.float32)).to(device)
+
         input_size = Xx.shape[1]
-        #else:
-        #    input_size = 256
+
         output_size = 1
         model = MLPClassifier(input_size, hidden_size, output_size)
         model.to(device)
-        state_dict = model.state_dict()
-        optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+
     y_predp_all = []
     y_predn_all = []
     y_test_all = []
-    Pv_mcnemar = []
-    Pv_delong = []
 
+    # do the CV
     for r, [train_index, test_index] in enumerate(zip(*[train_indices, val_indices])):
-        #if early_break and r ==1:
-        #    break
-        #r+=1
+
         X_train, X_test = Xx[train_index, :], Xx[test_index, :]
         y_train, y_test = Yy[train_index], Yy[test_index]
-        #if dataset_name.lower()=='abide':
-        #    n_components =256
-        #    pca = PCA(n_components=n_components)
-        #    mean_x = X_train.mean(0)
-        #    std_x = X_train.std(0)
-        #    X_train = pca.fit_transform((X_train - mean_x) / std_x)
-        #    X_test = pca.transform((X_test - mean_x) / std_x)
-        #    X_train = torch.from_numpy(X_train.astype(np.float32)).to(device)
-        #    X_test = torch.from_numpy(X_test.astype(np.float32)).to(device)
+
 
         if use_model=='lr':
 
@@ -339,11 +327,9 @@ def cross_validation(Xx, Yy, kf, perturb, info_model, use_model=None, early_brea
             X_train = scaler.fit_transform(X_train)
             X_test = scaler.transform(X_test)
 
-
-
-
+            forced = False
             out_f_name = os.path.join(dist_p, '{}_cv_{:03d}_rep_{}.pkl'.format(use_model, r + 1, repeat_no))
-            if not os.path.isfile(out_f_name):
+            if not os.path.isfile(out_f_name) or forced:
                 model = LogisticRegression(penalty='l2', solver='lbfgs', C=1.0, max_iter=1000)
                 model.fit(X_train, y_train.squeeze())
                 with open(out_f_name, 'wb') as file:
@@ -356,12 +342,17 @@ def cross_validation(Xx, Yy, kf, perturb, info_model, use_model=None, early_brea
 
 
             y_pred = model.predict(X_test)
+            y_pred_train = model.predict(X_train)
             coef_ = model.coef_.copy()
-            #model2 = LogisticRegression(penalty='l2', solver='lbfgs', C=1.0, max_iter=1000)
-            #model2.fit(X_train, y_train.squeeze())
 
-            coefp = coef_+perturb
-            coefn = coef_-perturb
+
+            if perturb2 is not None: # model perturbation
+                coefp = coef_+perturb1
+                coefn = coef_+perturb2
+            else:
+                coefp = coef_ + perturb1
+                coefn = coef_ - perturb1
+
             model.coef_ = coefp
             y_predp = model.predict(X_test)
             model.coef_ = coefn
@@ -372,7 +363,8 @@ def cross_validation(Xx, Yy, kf, perturb, info_model, use_model=None, early_brea
             y_test_all.append(y_test)
 
             acc = accuracy_score(y_pred, y_test)
-            #print(acc)
+            acc_train = accuracy_score(y_pred_train, y_train)
+
             accp = accuracy_score(y_predp, y_test)
             accn = accuracy_score(y_predn, y_test)
 
@@ -386,40 +378,29 @@ def cross_validation(Xx, Yy, kf, perturb, info_model, use_model=None, early_brea
             # normalize data
             X_train = (X_train-mean)/(std)
             X_test = (X_test-mean)/(std)
-            model.load_state_dict(state_dict) #reset model weights
-            y_pred, y_predp, y_predn = train_perturb_evaluate_MLP_model(X_train,y_train, perturb, X_test, model, optimizer, criterion,
-                           num_epochs=num_epochs,    batch_size = batch_size, device=device, out_f_name=out_f_name, perturb_mode=perturb_mode)
+            model = MLPClassifier(input_size, hidden_size, output_size)
+            model.to(device)
+            optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+            y_pred, y_predp, y_predn , y_pred_train= train_perturb_evaluate_MLP_model(X_train,y_train, [perturb1,perturb2], X_test, model, optimizer, criterion,
+                           num_epochs=num_epochs,    batch_size = batch_size, device=device, out_f_name=out_f_name, perturb_mode=perturb_mode,
+                                                                        forced=False)
 
             acc = calc_accuracy(y_pred, y_test)
+            acc_train = calc_accuracy(y_pred_train, y_train)
+
             accp = calc_accuracy(y_predp, y_test)
             accn = calc_accuracy(y_predn, y_test)
-            if perform_test_sample_size:
-                y_predp = y_predp.detach().cpu().numpy()
-                y_predn = y_predn.detach().cpu().numpy()
-                y_test = y_test.detach().cpu().numpy()
 
-                # perfrom McNemar test
-                Pv_mcnemar.append(McNemar(y_predp, y_predn, y_test))
-                # Perform DeLong's test
-                try:
-                    pvalue_delong = DeLong(y_predp, y_predn, y_test)
-                    Pv_delong.append(pvalue_delong)
-                except:
-                    pass
-
-            else:
-                y_predp_all.append(y_predp)
-                y_predn_all.append(y_predn)
-                y_test_all.append(y_test)
-
+            y_predp_all.append(y_predp)
+            y_predn_all.append(y_predn)
+            y_test_all.append(y_test)
 
 
         accpos.append(accp)
         accneg.append(accn)
         accs.append(acc)
-    if perform_test_sample_size:
-        return accpos, accneg, accs, [np.nanmean(Pv_mcnemar), np.nanmean(Pv_delong)]
-    else:
+        accs_train.append(acc_train)
+
         if use_model=='mlp':
             y_predn_all = torch.cat(y_predn_all,dim=0).ravel().detach().cpu().numpy()
             y_predp_all = torch.cat(y_predp_all,dim=0).ravel().detach().cpu().numpy()
@@ -428,13 +409,19 @@ def cross_validation(Xx, Yy, kf, perturb, info_model, use_model=None, early_brea
             y_predn_all = np.concatenate(y_predn_all,axis=0).ravel()
             y_predp_all = np.concatenate(y_predp_all, axis=0).ravel()
             y_test_all = np.concatenate(y_test_all, axis=0).ravel()
-        return accpos, accneg, accs, [y_predp_all, y_predn_all, y_test_all]
+        return accpos, accneg, accs,accs_train, [y_predp_all, y_predn_all, y_test_all]
 
-def select_sample(ind_gender, size):
-    inp1 = inputData[ind_gender, :]
-    lb1 = labels[ind_gender]
+def select_sample(ind_ones, size):
+    """
+    Randomly select samples
+    :param ind_ones:
+    :param size:
+    :return:
+    """
+    inp1 = inputData[ind_ones, :]
+    lb1 = labels[ind_ones]
     if size< lb1.shape[0]:
-        randomindinces_p = np.random.choice((ind_gender).sum(),size )
+        randomindinces_p = np.random.choice((ind_ones).sum(),size )
         X_sel = inp1[randomindinces_p, :]
         Y_sel = lb1[randomindinces_p]
     else:
@@ -444,29 +431,24 @@ def select_sample(ind_gender, size):
     return X_sel, Y_sel
 def run_experiment(info):
     """
-    Run the experiment
-    :param info:
+    run the main experiment
+    :param info: K number of folds in cross-validation, E perturbation level, N number of the data and # S number of repetition of the K-fold cross-validation
     :return:
     """
-    K, E, S, N,p =info
-    print(info)
-    # K number of folds in cross-validation
-    # E perturbation level
-    # S number of repetition of the K-fold cross-validation
+    K, E, S, N, p =info
 
-
-
-    ind_gender = (labels==1)
-    x1,y1=select_sample(ind_gender, N//2)
-    x2, y2=select_sample(~ind_gender, N-x1.shape[0])
+    ind_ones = (labels==1)
+    x1,y1=select_sample(ind_ones, N//2)  # select the samples
+    x2, y2=select_sample(~ind_ones, N-x1.shape[0])
     info2 = [el for el in info]
-    info2[1] = 5
-    dist_p = '/datos/Bahram/classifiers/{}_{}/{}'.format(dataset_name, use_model, "_".join([str(el) for el in info2]))
+    info2[1] = 5 # pute info2[1] as 5 just for saving purpose
+    dist_p = '{}_{}/{}'.format(dataset_name, use_model, "_".join([str(el) for el in info2]))
     if not os.path.exists(dist_p):
         os.makedirs(dist_p)
     X_sel = np.concatenate([x1,x2])
     Y_sel = np.concatenate([y1,y2])
     if dataset_name.lower()=='abide':
+        # specific procedure for abide dataset
         file_int = '{}/XY_{}.pkl'.format(dist_p, 0)
         if os.path.isfile(file_int):
             with open(file_int,'rb') as file:
@@ -480,20 +462,25 @@ def run_experiment(info):
 
     feature = X_sel.shape[1] #number of features
     if use_model=='lr':
-        if perturb_mode=='gaussian':
+        if perturb_mode=='gaussian': # for gaussian perturbation
             perturb = np.random.randn(1, feature) / E  # perturbation matrix
-        elif perturb_mode=='uniform':
+            perturb2 = None
+        elif perturb_mode=='uniform': # for uniform perturbation
             perturb_factor = 1./ E
             perturb = (2 * np.random.rand(*(1, feature)) - 1)* perturb_factor  # perturbation matrix
         info_model = [None]
     elif use_model=='mlp':
         if dataset_name.lower()!='abide':
-            hidden_size, learning_rate, num_epochs, batch_size=128, 0.001, 400, 1000
+            hidden_size, learning_rate, num_epochs, batch_size=128, 0.001, 400, 100
         else:
-            hidden_size, learning_rate, num_epochs, batch_size=128, 0.001, 400, 1000
+            hidden_size, learning_rate, num_epochs, batch_size=128, 0.001, 400, 100
         info_model = [hidden_size, learning_rate, num_epochs, batch_size]
         if perturb_mode=='gaussian':
             perturb = np.random.randn(1, hidden_size) / E  # for the last layer
+            perturb2 = None
+            # for two completely rando models
+            ##perturb = np.random.randn(1, hidden_size) / E  # for the last layer
+            ##perturb2 = np.random.randn(1, hidden_size) / E  # for the last layer
         elif perturb_mode=='uniform':
             perturb_factor = 1./ E
             perturb = (2 * np.random.rand(*(1, hidden_size)) - 1)* perturb_factor   # perturbation matrix
@@ -505,11 +492,11 @@ def run_experiment(info):
     all_accneg = []
     Pv_mcnemar = []
     Pv_delong = []
-    info_pvs = []
     all_acc_non_perturb =[]
-    for rp in range(S):
-        # stratified k-fold cross validation
-        kf = StratifiedKFold(n_splits=K, shuffle=True)
+    all_acc_non_perturb_train =[]
+    for rp in range(S): # repeat CV for specific number of times
+
+        kf = StratifiedKFold(n_splits=K, shuffle=True) # stratified k-fold cross validation
 
         # Lists to store training and validation indices
         train_indices = []
@@ -520,8 +507,6 @@ def run_experiment(info):
             train_indices.append(train_index)
             val_indices.append(val_index)
 
-        #info[1] = 5
-
         file_split = '{}/XY_{}.pkl'.format(dist_p, rp)
         if not os.path.isfile(file_split):
             with open(file_split,'wb') as file:
@@ -530,37 +515,36 @@ def run_experiment(info):
             ### for reading
             with open(file_split,'rb') as file:
                 [X_sel, Y_sel, train_indices, val_indices] = pickle.load(file)
-        if perform_test_sample_size:
-            accpos, accneg, acc_non_perturb, [pv_mcnemar,pvalue_delong] = cross_validation(X_sel, Y_sel, [train_indices, val_indices], perturb, info_model, use_model=use_model, early_break=False, dist_p=dist_p, repeat_no = rp)
-            Pv_mcnemar.append(pv_mcnemar)
-            Pv_delong.append(pvalue_delong)
-        else:
-            accpos, accneg, acc_non_perturb, [y_predp, y_predn, y_test] = cross_validation(X_sel, Y_sel, [train_indices, val_indices], perturb, info_model, use_model=use_model, early_break=False, dist_p=dist_p, repeat_no = rp)
+        # di the cross validation
+        accpos, accneg, acc_non_perturb,acc_train,  [y_predp, y_predn, y_test] = cross_validation(X_sel, Y_sel, [train_indices, val_indices], [perturb,perturb2], info_model, use_model=use_model, early_break=False, dist_p=dist_p, repeat_no = rp)
 
-            # perfrom McNemar test
-            pv_mcnemar = McNemar(y_predp, y_predn, y_test)
-            Pv_mcnemar.append(pv_mcnemar)
-            # Perform DeLong's test
-            try:
-                pvalue_delong = DeLong(y_predp, y_predn, y_test)
-                Pv_delong.append(pvalue_delong)
-            except:
-                pass
+        # perfrom McNemar test
+        pv_mcnemar = McNemar(y_predp, y_predn, y_test)
+        Pv_mcnemar.append(pv_mcnemar)
+        # Perform DeLong's test
+        try:
+            pvalue_delong = DeLong(y_predp, y_predn, y_test)
+            Pv_delong.append(pvalue_delong)
+        except:
+            pass
         all_accps.append(np.array(accpos))
         all_accneg.append(np.array(accneg))
         all_acc_non_perturb.append(np.array(acc_non_perturb))
+        all_acc_non_perturb_train.append(np.array(acc_train))
     all_accps = np.stack(all_accps).ravel()
     all_accneg = np.stack(all_accneg).ravel()
     all_acc_non_perturb = np.stack(all_acc_non_perturb).ravel()
+    all_acc_non_perturb_train = np.stack(all_acc_non_perturb_train).ravel()
 
     # perform t_test
     p_value_t_test = t_test(all_accps, all_accneg)
-
+    if p_value_t_test<0.05:
+        print(p_value_t_test)
     # perform corrected t_test
     p_value_corrected_t_test = corrected_t_test(all_accps, all_accneg, N, K)
 
 
-    return [np.nanmean(Pv_mcnemar), np.nanmean(Pv_delong), p_value_t_test, p_value_corrected_t_test, all_accps, all_accneg, all_acc_non_perturb]
+    return [np.nanmean(Pv_mcnemar), np.nanmean(Pv_delong), p_value_t_test, p_value_corrected_t_test, all_accps, all_accneg, all_acc_non_perturb_train, all_acc_non_perturb]
 
 
 
@@ -568,35 +552,34 @@ def run_experiment(info):
 
 if __name__ == '__main__':
 
-    global inputData, labels, device_id, dataset_name, use_model,perform_test_sample_size, perturb_mode
-    perform_test_sample_size = False
+    global inputData, labels, dataset_name, use_model, perturb_mode
 
-    dataset_name = sys.argv[1]
-    device_id=int(sys.argv[2])
+
+    dataset_name = sys.argv[1] # abide, abcd5, adni
+    use_model = sys.argv[2] # 'mlp' or 'lr'
+    P = sys.argv[3]  # repeat the whole experiment P times (default 100)
+
+
     inputData, labels = get_data(dataset_name)
-    use_model = 'mlp'
 
-    P = 100 # repeat the whole experiment P times
+    perturb_mode = 'gaussian' # The perturbation mode that can be gaussian or uniform
 
-    #Ss=[1]
-    perturb_mode = 'uniform' #gaussian
-    #Ks=[100]
-    #Es = [1,2,3,4,5,6] # Level of perturbation
-    Es = [1]
-    Ns = [1000] # Number of samples
+    Es = [1,2,3,4,5,6] # Perturbation level
 
-    Ss = [1, 4, 10, 15] # Repeat the K-fold cross-validation S times
-    #Ss=[10]
-    #
-    #Ss = [2,6,20]
-    Ks = [2, 10, 50, 100, 200]#, 400] # K-fold CV
-    #Ks = [2]
-    if dataset_name.lower()=='adni' or dataset_name.lower()=='abide':
-        Ks = [2, 5, 10, 25, 50, 75, 100, 150, 200, 300]  # , 400] # K-fold CV
-        Ss = [1, 2, 4, 6, 10, 15, 20]  # Repeat the K-fold cross-validation S times
-    #Ks = [5,25, 75, 150, 300]
+    Ns = [1000]
+    if dataset_name.lower()=='abide': # define the number of dataset for each dataset
+        Ns = [600]
+    if dataset_name.lower()=='adni':
+        Ns = [444]
+
+    Ks = [2, 5, 10, 25, 50] # define different number of K fold cross validation
+    Ss = [1, 2, 4, 6, 10] # The number of repetition of the whole process
 
 
+    if dataset_name.lower()=='adni':
+
+        Ks = [2, 5, 10, 25, 50]
+        Ss = [1, 2, 4, 6, 10]
 
     list_total = []
     for p in range(P):
@@ -608,21 +591,24 @@ if __name__ == '__main__':
 
 
 
-    # to debug
-    #for el in list_total:
-    #    run_experiment(el)
-
-    pool = mp.Pool(int(mp.cpu_count()//8 ))
+    #####################################################
+    pool = mp.Pool(1)#7
     results = pool.map(run_experiment, list_total)
     dictionary = defaultdict(list)
     for i, el in enumerate(list_total):
         dictionary[i] = [el, results[i]]
-    # write the results to a file
 
-    file_out = '{}_perturbation_{}_sample_{}_model_{}_pert_{}.pkl'.format(dataset_name, Es[0], Ns[0], use_model, perturb_mode)
-    if len(Es) > 1:
-        file_out = '{}_perturbation_all_sample_{}_model_{}_pert_{}.pkl'.format(dataset_name, Ns[0], use_model, perturb_mode)
-    if perform_test_sample_size:
-        file_out = '{}_perturbation_{}_sample_{}_model_{}_testsamplesize.pkl'.format(dataset_name, Es[0], Ns[0], use_model)
+    average_training_acc = np.mean([dictionary[key][-1][-2].mean() for key in dictionary.keys()])
+    average_test_acc = np.mean([dictionary[key][-1][-1].mean() for key in dictionary.keys()])
+    print('AVERAGE TRAINING ACC: {}, AVERAGE TEST ACC: {}'.format(average_training_acc, average_test_acc))
+
+
+
+    file_out = '{}_perturbation_{}_sample_{}_model_{}_pert_{}_numk_{}_nums_{}_randomperturbation.pkl'.format(dataset_name,
+                                                                                          Es[0], Ns[0],
+                                                                                          use_model,
+                                                                                          perturb_mode,
+                                                                                          len(Ks), len(Ss))
+    print(file_out)
     with open(file_out, 'wb') as file:
         pickle.dump(dictionary, file)
