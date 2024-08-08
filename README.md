@@ -1,22 +1,3 @@
-<style>
-body {
-    background-color: black; /* Set background to black */
-    color: white; /* Set text color to white for visibility */
-}
-
-td, th {
-    border: none !important;
-    color: white; /* Ensure table text is also visible */
-}
-
-code {
-    background-color: #333; /* Dark background for code blocks */
-    color: #0f0; /* Green text for code for contrast */
-    padding: 2px 4px; /* Add some padding for better readability */
-    border-radius: 4px; /* Rounded corners for code blocks */
-}
-</style>
-
 # "Is Your Classifier Better than Mine? Pitfalls in Statistical Tests for Model Comparison by Cross-Validation"
 
 This document explains how p-values can be influenced by various factors, including the number of cross-validations (CV), repetitions, and sample sizes.
