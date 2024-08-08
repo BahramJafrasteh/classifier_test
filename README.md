@@ -27,7 +27,7 @@ Installing the is straightforward. Follow these steps:
 
 1. **Clone the Library**:
    ```bash
-   git clone classifier_test
+   git clone https://github.com/BahramJafrasteh/classifier_test.git
    cd classifier_test
 2. **Install the required packages**
 3. **Run the Classifier**:
