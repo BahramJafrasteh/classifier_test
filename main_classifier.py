@@ -262,7 +262,7 @@ def corrected_t_test(accp , accn, N, K):
     sigma2 = sum((accd-accm)**2)/(n-1)
     sigma2_mod = sigma2 * (1/n + n2/n1)
     t_static =  accm / np.sqrt(sigma2_mod)
-    return t.cdf(-abs(t_static),n-1)
+    return 2*t.cdf(-abs(t_static),n-1)
 
 def cross_validation(Xx, Yy, train_val_ind, perturb, info_model, use_model=None, early_break=False, dist_p=None, repeat_no=0):
     """
